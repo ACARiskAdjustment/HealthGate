@@ -1,0 +1,169 @@
+# Next.js BFF Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: healthgate-bff
+  namespace: healthgate-auth
+  labels:
+    app: healthgate-bff
+spec:
+  type: ClusterIP
+  selector:
+    app: healthgate-bff
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+# Next.js BFF Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: healthgate-bff
+  namespace: healthgate-auth
+  labels:
+    app: healthgate-bff
+    app.kubernetes.io/part-of: healthgate
+    zone: auth-plane
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: healthgate-bff
+  template:
+    metadata:
+      labels:
+        app: healthgate-bff
+        zone: auth-plane
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/api/metrics"
+    spec:
+      serviceAccountName: healthgate-bff
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: bff
+          image: healthgate-bff:latest
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: KEYCLOAK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: bff-config
+                  key: keycloak-url
+            - name: KEYCLOAK_REALM
+              valueFrom:
+                configMapKeyRef:
+                  name: bff-config
+                  key: keycloak-realm
+            - name: KEYCLOAK_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: bff-config
+                  key: keycloak-client-id
+            - name: KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bff-secret
+                  key: keycloak-client-secret
+            - name: COOKIE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bff-secret
+                  key: cookie-encryption-key
+            - name: NEXTAUTH_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: bff-config
+                  key: nextauth-url
+            # OpenTelemetry
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.healthgate-observability:4317
+            - name: OTEL_TRACES_SAMPLER
+              value: parentbased_traceidratio
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: "0.1"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.name=healthgate-bff,service.namespace=healthgate,deployment.environment=production
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /api/readyz
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+            timeoutSeconds: 3
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: nextjs-cache
+              mountPath: /app/.next/cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: nextjs-cache
+          emptyDir: {}
+---
+# Next.js BFF HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: healthgate-bff-hpa
+  namespace: healthgate-auth
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: healthgate-bff
+  minReplicas: 3
+  maxReplicas: 50
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 5
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 300
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

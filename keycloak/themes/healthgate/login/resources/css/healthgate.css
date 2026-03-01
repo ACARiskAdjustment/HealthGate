@@ -1,0 +1,84 @@
+/* HealthGate Keycloak Theme Overrides
+   Warm neutral palette with terracotta accent */
+
+:root {
+  --hg-bg: #faf9f5;
+  --hg-fg: #141413;
+  --hg-primary: #d97757;
+  --hg-primary-hover: #c15f3c;
+  --hg-border: #e8e6dc;
+  --hg-muted: #b0aea5;
+  --hg-card-shadow: 0 2px 8px rgba(20,20,19,0.08);
+  --hg-radius: 0.5rem;
+}
+
+body {
+  background-color: var(--hg-bg) !important;
+  color: var(--hg-fg) !important;
+  font-family: 'Satoshi', 'Inter', system-ui, sans-serif !important;
+}
+
+#kc-header-wrapper {
+  font-family: 'Cormorant Garamond', Georgia, serif !important;
+  color: var(--hg-fg) !important;
+}
+
+#kc-form-login,
+#kc-register-form,
+#kc-totp-settings-form,
+#kc-totp-login-form {
+  background: var(--hg-bg);
+  border: none;
+  border-radius: var(--hg-radius);
+  box-shadow: var(--hg-card-shadow);
+  padding: 2rem;
+}
+
+.btn-primary {
+  background-color: var(--hg-primary) !important;
+  border-color: var(--hg-primary) !important;
+  color: var(--hg-bg) !important;
+  border-radius: var(--hg-radius) !important;
+  font-weight: 500 !important;
+  transition: background-color 0.15s ease !important;
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+  background-color: var(--hg-primary-hover) !important;
+  border-color: var(--hg-primary-hover) !important;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="email"] {
+  border: 1px solid var(--hg-border) !important;
+  border-radius: var(--hg-radius) !important;
+  padding: 0.5rem 0.75rem !important;
+  font-size: 0.875rem !important;
+  background: transparent !important;
+  color: var(--hg-fg) !important;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus {
+  border-color: var(--hg-primary) !important;
+  box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.2) !important;
+  outline: none !important;
+}
+
+a {
+  color: var(--hg-primary) !important;
+}
+
+a:hover {
+  color: var(--hg-primary-hover) !important;
+}
+
+.alert-error {
+  background-color: rgba(229, 72, 77, 0.1) !important;
+  border: 1px solid rgba(229, 72, 77, 0.2) !important;
+  color: #e5484d !important;
+  border-radius: var(--hg-radius) !important;
+}

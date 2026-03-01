@@ -1,0 +1,32 @@
+{
+  "extends": ["next/core-web-vitals"],
+  "plugins": ["security"],
+  "rules": {
+    "no-eval": "error",
+    "security/detect-eval-with-expression": "error",
+    "security/detect-non-literal-regexp": "warn",
+    "security/detect-object-injection": "warn",
+    "security/detect-possible-timing-attacks": "warn",
+    "react/no-danger": "error",
+    "no-restricted-properties": [
+      "error",
+      {
+        "object": "document",
+        "property": "write",
+        "message": "document.write is banned for XSS safety."
+      },
+      {
+        "object": "document",
+        "property": "writeln",
+        "message": "document.writeln is banned for XSS safety."
+      }
+    ],
+    "no-restricted-globals": [
+      "error",
+      {
+        "name": "eval",
+        "message": "eval() is banned for XSS safety."
+      }
+    ]
+  }
+}

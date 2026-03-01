@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* HealthGate Design Tokens — Light Mode */
+    /* Warm neutral palette inspired by Claude's design language */
+    --background: 0.978 0.008 85;        /* #faf9f5 warm off-white */
+    --foreground: 0.110 0.006 60;        /* #141413 warm near-black */
+
+    --card: 0.978 0.008 85;             /* #faf9f5 — card floats via shadow */
+    --card-foreground: 0.110 0.006 60;  /* #141413 */
+
+    --popover: 0.978 0.008 85;
+    --popover-foreground: 0.110 0.006 60;
+
+    --primary: 0.700 0.140 45;          /* #d97757 terracotta accent */
+    --primary-foreground: 0.978 0.008 85; /* #faf9f5 */
+
+    --secondary: 0.950 0.010 80;        /* light warm gray */
+    --secondary-foreground: 0.110 0.006 60;
+
+    --muted: 0.950 0.010 80;
+    --muted-foreground: 0.720 0.010 80;  /* #b0aea5 */
+
+    --accent: 0.960 0.008 85;           /* #f4f3ee hover state */
+    --accent-foreground: 0.110 0.006 60;
+
+    --destructive: 0.577 0.245 27.325;  /* #e5484d error red */
+    --destructive-foreground: 0.978 0.008 85;
+
+    --border: 0.905 0.018 80;           /* #e8e6dc warm gray border */
+    --input: 0.905 0.018 80;            /* #e8e6dc */
+    --ring: 0.700 0.140 45;             /* #d97757 terracotta focus ring */
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 0.125 0.006 60;        /* #1f1e1d warm dark */
+    --foreground: 0.978 0.008 85;        /* #faf9f5 */
+
+    --card: 0.165 0.008 60;             /* #2a2928 elevated surface */
+    --card-foreground: 0.978 0.008 85;
+
+    --popover: 0.165 0.008 60;
+    --popover-foreground: 0.978 0.008 85;
+
+    --primary: 0.700 0.140 45;          /* #d97757 — maintained in dark */
+    --primary-foreground: 0.978 0.008 85;
+
+    --secondary: 0.200 0.008 60;
+    --secondary-foreground: 0.978 0.008 85;
+
+    --muted: 0.200 0.008 60;
+    --muted-foreground: 0.720 0.010 80;  /* #b0aea5 maintained */
+
+    --accent: 0.220 0.010 60;           /* #363534 */
+    --accent-foreground: 0.978 0.008 85;
+
+    --destructive: 0.577 0.245 27.325;  /* #e5484d maintained */
+    --destructive-foreground: 0.978 0.008 85;
+
+    --border: 1 0 0 / 12%;              /* white at 12% opacity */
+    --input: 1 0 0 / 15%;               /* white at 15% opacity */
+    --ring: 0.700 0.140 45;             /* #d97757 maintained */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+  }
+  h1, h2, h3 {
+    @apply font-heading;
+  }
+}

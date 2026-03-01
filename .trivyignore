@@ -1,0 +1,3 @@
+# Trivy ignore file for HealthGate
+# Add CVE IDs here if they have been reviewed and accepted as risk
+# Format: CVE-YYYY-NNNNN

@@ -1,0 +1,388 @@
+{
+  "dashboards": [
+    {
+      "title": "HealthGate — Auth Overview",
+      "uid": "healthgate-auth-overview",
+      "tags": ["healthgate", "auth"],
+      "timezone": "browser",
+      "refresh": "30s",
+      "panels": [
+        {
+          "title": "Login Success Rate",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(keycloak_logins{realm=\"healthgate-clinician\",result=\"success\"}[5m])) / sum(rate(keycloak_logins{realm=\"healthgate-clinician\"}[5m])) * 100",
+              "legendFormat": "Success Rate"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "thresholds": {
+                "steps": [
+                  { "color": "red", "value": 0 },
+                  { "color": "yellow", "value": 95 },
+                  { "color": "green", "value": 99 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Login Rate (req/sec)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+          "targets": [
+            {
+              "expr": "sum(rate(keycloak_logins{realm=\"healthgate-clinician\",result=\"success\"}[5m]))",
+              "legendFormat": "Success"
+            },
+            {
+              "expr": "sum(rate(keycloak_logins{realm=\"healthgate-clinician\",result=\"failure\"}[5m]))",
+              "legendFormat": "Failure"
+            },
+            {
+              "expr": "sum(rate(keycloak_logins{realm=\"healthgate-clinician\",result=\"mfa_required\"}[5m]))",
+              "legendFormat": "MFA Required"
+            }
+          ]
+        },
+        {
+          "title": "Login Latency (p50 / p95 / p99)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(healthgate_bff_request_duration_seconds_bucket{route=\"/api/auth/login\"}[5m])) by (le))",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(healthgate_bff_request_duration_seconds_bucket{route=\"/api/auth/login\"}[5m])) by (le))",
+              "legendFormat": "p95"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(healthgate_bff_request_duration_seconds_bucket{route=\"/api/auth/login\"}[5m])) by (le))",
+              "legendFormat": "p99"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "thresholdsStyle": { "mode": "line" } },
+              "thresholds": {
+                "steps": [
+                  { "color": "green", "value": 0 },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 2 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Active Sessions",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(keycloak_active_sessions{realm=\"healthgate-clinician\"})",
+              "legendFormat": "Sessions"
+            }
+          ]
+        },
+        {
+          "title": "Error Rate (5xx)",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(healthgate_bff_request_duration_seconds_count{status_code=~\"5..\"}[5m])) / sum(rate(healthgate_bff_request_duration_seconds_count[5m])) * 100",
+              "legendFormat": "5xx Rate"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "thresholds": {
+                "steps": [
+                  { "color": "green", "value": 0 },
+                  { "color": "yellow", "value": 0.1 },
+                  { "color": "red", "value": 1 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Token Refresh Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+          "targets": [
+            {
+              "expr": "sum(rate(healthgate_bff_token_refresh_duration_seconds_count{result=\"success\"}[5m]))",
+              "legendFormat": "Success"
+            },
+            {
+              "expr": "sum(rate(healthgate_bff_token_refresh_duration_seconds_count{result=\"failure\"}[5m]))",
+              "legendFormat": "Failure"
+            }
+          ]
+        },
+        {
+          "title": "Error Budget Remaining",
+          "type": "gauge",
+          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+          "targets": [
+            {
+              "expr": "1 - ((1 - (sum(rate(keycloak_logins{realm=\"healthgate-clinician\",result=\"success\"}[30d])) / sum(rate(keycloak_logins{realm=\"healthgate-clinician\"}[30d])))) / 0.0005) ",
+              "legendFormat": "Budget Remaining"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "thresholds": {
+                "steps": [
+                  { "color": "red", "value": 0 },
+                  { "color": "yellow", "value": 0.25 },
+                  { "color": "green", "value": 0.5 }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "title": "HealthGate — Session Management",
+      "uid": "healthgate-sessions",
+      "tags": ["healthgate", "sessions"],
+      "timezone": "browser",
+      "refresh": "30s",
+      "panels": [
+        {
+          "title": "Active Sessions by Realm",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "keycloak_active_sessions",
+              "legendFormat": "{{realm}}"
+            }
+          ]
+        },
+        {
+          "title": "Session Timeouts (Idle)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(keycloak_session_timeouts{type=\"idle\"}[5m]))",
+              "legendFormat": "Idle Timeout"
+            },
+            {
+              "expr": "sum(rate(keycloak_session_timeouts{type=\"max_lifetime\"}[5m]))",
+              "legendFormat": "Max Lifetime"
+            }
+          ]
+        },
+        {
+          "title": "Session Extensions (Stay Signed In)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(healthgate_bff_token_refresh_duration_seconds_count{result=\"success\"}[5m]))",
+              "legendFormat": "Extensions/sec"
+            }
+          ]
+        },
+        {
+          "title": "Concurrent Sessions per User (Top 10)",
+          "type": "table",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "topk(10, keycloak_user_sessions)",
+              "legendFormat": "{{user_id}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "HealthGate — Security",
+      "uid": "healthgate-security",
+      "tags": ["healthgate", "security"],
+      "timezone": "browser",
+      "refresh": "30s",
+      "panels": [
+        {
+          "title": "Account Lockouts",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(keycloak_failed_login_attempts{realm=\"healthgate-clinician\"}[5m]))",
+              "legendFormat": "Failed Attempts/sec"
+            },
+            {
+              "expr": "sum(rate(keycloak_lockouts{realm=\"healthgate-clinician\"}[5m]))",
+              "legendFormat": "Lockouts/sec"
+            }
+          ]
+        },
+        {
+          "title": "Rate Limit Hits",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(healthgate_bff_rate_limit_hits_total[5m])) by (route)",
+              "legendFormat": "{{route}}"
+            }
+          ]
+        },
+        {
+          "title": "CSRF Validation Failures",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(healthgate_bff_csrf_validation_failures_total[5m])) by (route)",
+              "legendFormat": "{{route}}"
+            }
+          ]
+        },
+        {
+          "title": "MFA Challenge Results",
+          "type": "piechart",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(increase(keycloak_logins{realm=\"healthgate-clinician\",result=\"mfa_success\"}[24h]))",
+              "legendFormat": "MFA Success"
+            },
+            {
+              "expr": "sum(increase(keycloak_logins{realm=\"healthgate-clinician\",result=\"mfa_failure\"}[24h]))",
+              "legendFormat": "MFA Failure"
+            }
+          ]
+        },
+        {
+          "title": "Top Failed Login IPs (Last 1h)",
+          "type": "table",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "topk(20, sum(increase(healthgate_bff_rate_limit_hits_total[1h])) by (ip))",
+              "legendFormat": "{{ip}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "HealthGate — Infrastructure",
+      "uid": "healthgate-infra",
+      "tags": ["healthgate", "infrastructure"],
+      "timezone": "browser",
+      "refresh": "30s",
+      "panels": [
+        {
+          "title": "Pod Count by Deployment",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "count(kube_pod_info{namespace=\"healthgate-auth\",pod=~\"keycloak.*\"})",
+              "legendFormat": "Keycloak"
+            },
+            {
+              "expr": "count(kube_pod_info{namespace=\"healthgate-auth\",pod=~\"nextjs-bff.*\"})",
+              "legendFormat": "BFF"
+            },
+            {
+              "expr": "count(kube_pod_info{namespace=\"healthgate-auth\",pod=~\"pgbouncer.*\"})",
+              "legendFormat": "PgBouncer"
+            }
+          ]
+        },
+        {
+          "title": "CPU Usage by Pod",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+          "targets": [
+            {
+              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"healthgate-auth\"}[5m])) by (pod)",
+              "legendFormat": "{{pod}}"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "percentunit" } }
+        },
+        {
+          "title": "Memory Usage by Pod",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+          "targets": [
+            {
+              "expr": "sum(container_memory_working_set_bytes{namespace=\"healthgate-auth\"}) by (pod)",
+              "legendFormat": "{{pod}}"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "bytes" } }
+        },
+        {
+          "title": "PgBouncer Active Connections",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+          "targets": [
+            {
+              "expr": "pgbouncer_pools_server_active_connections{database=\"keycloak\"}",
+              "legendFormat": "Active"
+            },
+            {
+              "expr": "pgbouncer_pools_server_idle_connections{database=\"keycloak\"}",
+              "legendFormat": "Idle"
+            },
+            {
+              "expr": "pgbouncer_pools_client_waiting_connections{database=\"keycloak\"}",
+              "legendFormat": "Waiting"
+            }
+          ]
+        },
+        {
+          "title": "Request Queue Depth",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+          "targets": [
+            {
+              "expr": "sum(rate(healthgate_bff_request_duration_seconds_count[1m])) by (route)",
+              "legendFormat": "{{route}}"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "reqps" } }
+        },
+        {
+          "title": "HPA Status",
+          "type": "table",
+          "gridPos": { "h": 6, "w": 24, "x": 0, "y": 20 },
+          "targets": [
+            {
+              "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"healthgate-auth\"}",
+              "legendFormat": "{{horizontalpodautoscaler}} — Current"
+            },
+            {
+              "expr": "kube_horizontalpodautoscaler_spec_max_replicas{namespace=\"healthgate-auth\"}",
+              "legendFormat": "{{horizontalpodautoscaler}} — Max"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

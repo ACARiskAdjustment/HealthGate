@@ -1,0 +1,215 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: healthgate-alerts
+  namespace: healthgate-auth
+  labels:
+    app.kubernetes.io/part-of: healthgate
+    prometheus: healthgate
+spec:
+  groups:
+    # ──────────────────────────────────────────────────────
+    # CRITICAL — PagerDuty page on-call immediately
+    # ──────────────────────────────────────────────────────
+    - name: healthgate.critical
+      rules:
+        - alert: HealthGateLoginFailureRateHigh
+          expr: |
+            rate(keycloak_logins_total{result="error"}[5m])
+            / rate(keycloak_logins_total[5m]) > 0.10
+          for: 5m
+          labels:
+            severity: critical
+            team: healthgate-platform
+          annotations:
+            summary: "Login failure rate exceeds 10% for 5 minutes"
+            description: "Login failure rate is {{ $value | humanizePercentage }}. Possible brute-force attack or Keycloak issue."
+            runbook: "RB-005"
+
+        - alert: HealthGateKeycloakDown
+          expr: up{job="keycloak"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            team: healthgate-platform
+          annotations:
+            summary: "Keycloak instance is down"
+            description: "Keycloak instance {{ $labels.instance }} has been unreachable for 1 minute."
+            runbook: "RB-001"
+
+        - alert: HealthGateDBFailover
+          expr: pg_replication_is_replica{job="postgres-primary"} == 1
+          for: 0m
+          labels:
+            severity: critical
+            team: healthgate-platform
+          annotations:
+            summary: "PostgreSQL failover detected — primary is now a replica"
+            description: "Primary database has been demoted. Patroni failover triggered."
+            runbook: "RB-002"
+
+        - alert: HealthGateZeroLogins
+          expr: rate(keycloak_logins_total{result="success"}[2m]) == 0
+          for: 2m
+          labels:
+            severity: critical
+            team: healthgate-platform
+          annotations:
+            summary: "No successful logins for 2 minutes"
+            description: "Zero successful logins detected. Authentication may be completely broken."
+            runbook: "RB-003"
+
+        - alert: HealthGateAuditHashChainBroken
+          expr: healthgate_audit_hash_chain_valid == 0
+          for: 0m
+          labels:
+            severity: critical
+            team: healthgate-security
+          annotations:
+            summary: "Audit log hash chain integrity failure"
+            description: "Hash chain verification detected tampering or missing entries."
+            runbook: "RB-006"
+
+    # ──────────────────────────────────────────────────────
+    # WARNING — Slack notification
+    # ──────────────────────────────────────────────────────
+    - name: healthgate.warning
+      rules:
+        - alert: HealthGateElevatedLockouts
+          expr: rate(keycloak_account_lockouts_total[1h]) > 50
+          labels:
+            severity: warning
+            team: healthgate-security
+          annotations:
+            summary: "Elevated account lockout rate (>50/hr)"
+            description: "{{ $value }} account lockouts per hour. Possible credential stuffing."
+            runbook: "RB-005"
+
+        - alert: HealthGateCertExpiringSoon
+          expr: certmanager_certificate_expiration_timestamp_seconds - time() < 2592000
+          labels:
+            severity: warning
+            team: healthgate-platform
+          annotations:
+            summary: "TLS certificate expiring within 30 days"
+            description: "Certificate {{ $labels.name }} expires in {{ $value | humanizeDuration }}."
+            runbook: "RB-007"
+
+        - alert: HealthGateDiskUsageHigh
+          expr: |
+            (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.20
+          for: 10m
+          labels:
+            severity: warning
+            team: healthgate-platform
+          annotations:
+            summary: "Disk usage above 80%"
+            description: "Node {{ $labels.instance }} has less than 20% disk space remaining."
+
+        - alert: HealthGateReplicationLag
+          expr: pg_replication_lag_seconds > 1
+          for: 5m
+          labels:
+            severity: warning
+            team: healthgate-platform
+          annotations:
+            summary: "PostgreSQL replication lag exceeds 1 second"
+            description: "Replication lag is {{ $value }}s. May impact RPO during failover."
+            runbook: "RB-002"
+
+        - alert: HealthGateErrorBudgetBurn
+          expr: |
+            1 - (
+              sum(rate(healthgate_bff_request_duration_seconds_count{status_code!~"5.."}[1h]))
+              / sum(rate(healthgate_bff_request_duration_seconds_count[1h]))
+            ) > 0.001
+          for: 1h
+          labels:
+            severity: warning
+            team: healthgate-platform
+          annotations:
+            summary: "Error budget burn rate elevated"
+            description: "Error rate is consuming error budget faster than sustainable. Current hourly error rate: {{ $value | humanizePercentage }}."
+
+        - alert: HealthGateHighLoginLatency
+          expr: |
+            histogram_quantile(0.95, rate(keycloak_login_duration_seconds_bucket[5m])) > 2
+          for: 5m
+          labels:
+            severity: warning
+            team: healthgate-platform
+          annotations:
+            summary: "Login latency p95 exceeds 2 seconds"
+            description: "p95 login latency is {{ $value }}s, exceeding SLO target."
+
+        - alert: HealthGatePgBouncerSaturation
+          expr: pgbouncer_pools_server_active > 160
+          for: 1m
+          labels:
+            severity: warning
+            team: healthgate-platform
+          annotations:
+            summary: "PgBouncer connection pool nearing saturation (>160/200)"
+            description: "Active connections: {{ $value }} of 200 max."
+
+        - alert: HealthGatePodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total{namespace="healthgate-auth"}[10m]) > 3
+          labels:
+            severity: warning
+            team: healthgate-platform
+          annotations:
+            summary: "Pod {{ $labels.pod }} restarted >3 times in 10 minutes"
+            description: "Container {{ $labels.container }} is crash-looping."
+
+        - alert: HealthGateHighCPU
+          expr: |
+            rate(container_cpu_usage_seconds_total{namespace="healthgate-auth"}[5m]) /
+            kube_pod_container_resource_limits{namespace="healthgate-auth", resource="cpu"} > 0.85
+          for: 5m
+          labels:
+            severity: warning
+            team: healthgate-platform
+          annotations:
+            summary: "Pod {{ $labels.pod }} CPU usage above 85%"
+
+        - alert: HealthGateHighMemory
+          expr: |
+            container_memory_usage_bytes{namespace="healthgate-auth"} /
+            kube_pod_container_resource_limits{namespace="healthgate-auth", resource="memory"} > 0.90
+          for: 5m
+          labels:
+            severity: warning
+            team: healthgate-platform
+          annotations:
+            summary: "Pod {{ $labels.pod }} memory usage above 90%"
+
+        - alert: HealthGateMFAFailureRateHigh
+          expr: |
+            rate(keycloak_mfa_challenges_total{result="error"}[5m])
+            / rate(keycloak_mfa_challenges_total[5m]) > 0.20
+          for: 5m
+          labels:
+            severity: warning
+            team: healthgate-security
+          annotations:
+            summary: "MFA failure rate exceeds 20%"
+            description: "Possible MFA brute-force or user experience issue."
+
+        - alert: HealthGateTokenRefreshFailureRate
+          expr: |
+            rate(keycloak_token_refreshes_total{result="error"}[5m])
+            / rate(keycloak_token_refreshes_total[5m]) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            team: healthgate-platform
+          annotations:
+            summary: "Token refresh failure rate exceeds 5%"
+
+        - alert: HealthGateSessionCapacityHigh
+          expr: keycloak_active_sessions > 45000
+          labels:
+            severity: warning
+            team: healthgate-platform
+          annotations:
+            summary: "Active sessions at 90% capacity (>45K of 50K max)"
