@@ -1,1 +1,2474 @@
-# HealthGate -- UX Design Finalization Document\n\n**Document Version:** 1.0\n**Author:** UX Lead, Google Health\n**Date:** 2026-03-01\n**Status:** DRAFT -- Pending Engineering Review\n**Inputs:** 05-ux-ui-design-spec.md (Bare Metal UX Spec), 06-prd.md (PRD v1.0)\n**Classification:** Google Confidential\n\n---\n\n## 1. Component Specifications\n\nFor each of the 10 screens, I specify the complete component tree, shadcn/ui configuration, form schema, state management, error handling, loading states, and keyboard behavior.\n\n---\n\n### S1: Login (`/login`)\n\n**Component Tree:**\n\n```\n<LoginPage>\n  <AuthLayout>                              // shared layout for all auth screens\n    <BrandHeader />                         // Logo + \"HealthGate\" wordmark\n    <Card className=\"shadow-card border-0 max-w-sm w-full\">\n      <CardHeader>\n        <CardTitle>Welcome back</CardTitle>  // Cormorant Garamond, text-3xl, font-normal\n        <CardDescription>\n          Sign in to continue to {appName}\n        </CardDescription>\n      </CardHeader>\n      <CardContent>\n        <Form {...form}>                     // react-hook-form + zod resolver\n          {formError && <FormBanner message={formError} />}\n          <FormField name=\"email\">\n            <FormItem>\n              <FormLabel>Email address</FormLabel>\n              <FormControl>\n                <Input\n                  type=\"email\"\n                  placeholder=\"you@example.com\"\n                  autoComplete=\"email\"\n                  autoFocus\n                />\n              </FormControl>\n              <FormMessage />\n            </FormItem>\n          </FormField>\n          <FormField name=\"password\">\n            <FormItem>\n              <FormLabel>Password</FormLabel>\n              <FormControl>\n                <PasswordInput                // custom wrapper around Input\n                  autoComplete=\"current-password\"\n                  autoHideAfterMs={10000}     // FR1 AC7: revert to hidden after 10s\n                />\n              </FormControl>\n              <FormMessage />\n            </FormItem>\n          </FormField>\n          <div className=\"flex justify-end\">\n            <Link href=\"/forgot-password\" className=\"text-sm text-primary hover:underline\">\n              Forgot password?\n            </Link>\n          </div>\n          <Button\n            type=\"submit\"\n            className=\"w-full\"\n            disabled={isSubmitting || isThrottled}\n          >\n            {isSubmitting ? (\n              <>\n                <Loader2 className=\"mr-2 h-4 w-4 animate-spin\" />\n                Signing in...\n              </>\n            ) : 'Continue'}\n          </Button>\n        </Form>\n        <Separator className=\"my-6\" />\n        <div className=\"relative flex items-center justify-center\">\n          <span className=\"bg-card px-2 text-xs text-muted-foreground\">\n            or continue with\n          </span>\n        </div>\n        <Button variant=\"outline\" className=\"w-full mt-4\" onClick={handleSSO}>\n          <BuildingIcon className=\"mr-2 h-4 w-4\" />\n          SSO / SAML\n        </Button>\n      </CardContent>\n      <CardFooter className=\"flex-col gap-2\">\n        <p className=\"text-sm text-muted-foreground\">\n          Don't have an account?{' '}\n          <Link href=\"/register\" className=\"text-primary hover:underline font-medium\">\n            Sign up\n          </Link>\n        </p>\n      </CardFooter>\n    </Card>\n    <LegalFooter />                          // HIPAA Notice . Privacy . Terms\n  </AuthLayout>\n</LoginPage>\n```\n\n**shadcn/ui Components with Exact Props:**\n\n| Component | Props / Configuration |\n|---|---|\n| `Card` | `className=\"shadow-card border-0 max-w-sm w-full p-8 sm:p-6\"` |\n| `CardTitle` | `className=\"font-heading text-3xl font-normal tracking-[-0.02em] leading-[1.2]\"` |\n| `CardDescription` | `className=\"font-body text-sm text-muted-foreground\"` |\n| `Form` | Uses `useForm<LoginFormValues>()` with `zodResolver(loginSchema)` |\n| `FormField` | `control={form.control}`, `name=\"email\"` / `name=\"password\"` |\n| `Input` (email) | `type=\"email\"`, `autoComplete=\"email\"`, `autoFocus`, `className=\"h-10\"` |\n| `PasswordInput` | Custom component wrapping `Input` with `type` toggle, `autoComplete=\"current-password\"`, eye icon button with `aria-label=\"Show password\"` / `\"Hide password\"` |\n| `Button` (primary) | `type=\"submit\"`, `variant=\"default\"` (terracotta bg), `className=\"w-full h-10\"`, `disabled={isSubmitting \\|\\| isThrottled}` |\n| `Button` (SSO) | `variant=\"outline\"`, `className=\"w-full h-10\"` |\n| `Separator` | default, wrapped in relative div with centered label text |\n| `Link` (forgot pw) | `className=\"text-sm text-primary hover:underline\"` |\n| `Link` (sign up) | `className=\"text-primary hover:underline font-medium\"` |\n\n**Zod Form Schema:**\n\n```typescript\nimport { z } from 'zod';\n\nexport const loginSchema = z.object({\n  email: z\n    .string()\n    .min(1, 'Email address is required')\n    .email('Enter a valid email address')\n    .transform((v) => v.toLowerCase().trim()),\n  password: z\n    .string()\n    .min(1, 'Password is required'),\n});\n\nexport type LoginFormValues = z.infer<typeof loginSchema>;\n```\n\n**State Management:**\n\n| State | Location | Purpose |\n|---|---|---|\n| `form` (react-hook-form) | Local component via `useForm()` | Field values, field-level validation errors, dirty/touched state |\n| `isSubmitting` | Derived from `form.formState.isSubmitting` | Button loading state |\n| `formError` | Local `useState<string \\| null>` | Banner error for server-returned auth failures |\n| `isThrottled` | Local `useState<boolean>` | FR12 AC6: disable button for 2s after failure, 5s after 3 failures |\n| `failureCount` | Local `useRef<number>` | Track consecutive failures in this browser session for progressive throttle |\n| `passwordVisible` | Inside `PasswordInput` (`useState<boolean>`) | Eye toggle state |\n| `autoHideTimer` | Inside `PasswordInput` (`useRef<NodeJS.Timeout>`) | 10-second auto-hide timer |\n\n**Error States:**\n\n| Error Condition | Display Type | Message |\n|---|---|---|\n| Field empty on submit | Inline (below field) | \"Email address is required\" / \"Password is required\" |\n| Invalid email format | Inline (below field) | \"Enter a valid email address\" |\n| Wrong credentials (401 from server) | Banner (above form) | \"Invalid email or password. Please try again.\" |\n| Account locked (Keycloak `USER_TEMPORARILY_DISABLED`) | Redirect | Redirect to `/account-locked` |\n| Server error (5xx) | Toast (Sonner) | \"Something went wrong. Please try again later.\" |\n| Rate limited (429) | Toast (Sonner) | \"Too many requests. Please wait a moment and try again.\" |\n| Network failure | Toast (Sonner) | \"Unable to connect. Check your internet connection and try again.\" |\n\n**Loading States:**\n\n| Trigger | Visual |\n|---|---|\n| Form submission | Button text changes to \"Signing in...\" with `Loader2` spinner icon (h-4 w-4 animate-spin). Button disabled. All inputs disabled via `fieldset[disabled]`. |\n| SSO button click | SSO button shows `Loader2` spinner, text changes to \"Redirecting...\". All form inputs and primary button disabled. |\n\n**Keyboard Shortcuts / Tab Order:**\n\n1. Email input (autoFocus)\n2. Password input\n3. Password visibility toggle (eye icon)\n4. \"Forgot password?\" link\n5. \"Continue\" button\n6. \"SSO / SAML\" button\n7. \"Sign up\" link\n8. Legal footer links\n\n`Enter` key submits the form from any field within the `<form>` element. No custom keyboard shortcuts beyond native HTML form behavior.\n\n---\n\n### S2: Register (`/register`)\n\n**Component Tree:**\n\n```\n<RegisterPage>\n  <AuthLayout>\n    <BrandHeader />\n    <Card className=\"shadow-card border-0 max-w-sm w-full\">\n      <CardHeader>\n        <CardTitle>Create your account</CardTitle>\n        <CardDescription>\n          Sign up to access your health services\n        </CardDescription>\n      </CardHeader>\n      <CardContent>\n        <Form {...form}>\n          {formError && <FormBanner message={formError} />}\n          <FormField name=\"fullName\">\n            <FormItem>\n              <FormLabel>Full name</FormLabel>\n              <FormControl>\n                <Input autoComplete=\"name\" autoFocus />\n              </FormControl>\n              <FormMessage />\n            </FormItem>\n          </FormField>\n          <FormField name=\"email\">\n            <FormItem>\n              <FormLabel>Email address</FormLabel>\n              <FormControl>\n                <Input type=\"email\" autoComplete=\"email\" />\n              </FormControl>\n              <FormMessage />\n            </FormItem>\n          </FormField>\n          <FormField name=\"password\">\n            <FormItem>\n              <FormLabel>Password</FormLabel>\n              <FormControl>\n                <PasswordInput autoComplete=\"new-password\" />\n              </FormControl>\n              <PasswordPolicyHelper password={watchedPassword} />\n              <FormMessage />\n            </FormItem>\n          </FormField>\n          <FormField name=\"confirmPassword\">\n            <FormItem>\n              <FormLabel>Confirm password</FormLabel>\n              <FormControl>\n                <PasswordInput autoComplete=\"new-password\" />\n              </FormControl>\n              <FormMessage />\n            </FormItem>\n          </FormField>\n          <FormField name=\"termsAccepted\">\n            <FormItem className=\"flex items-start gap-2\">\n              <FormControl>\n                <Checkbox />\n              </FormControl>\n              <FormLabel className=\"text-sm font-normal leading-snug\">\n                I agree to the{' '}\n                <Link href=\"/terms\" className=\"text-primary hover:underline\">Terms of Service</Link>\n                {' '}and{' '}\n                <Link href=\"/privacy\" className=\"text-primary hover:underline\">Privacy Policy</Link>\n              </FormLabel>\n              <FormMessage />\n            </FormItem>\n          </FormField>\n          <Button\n            type=\"submit\"\n            className=\"w-full\"\n            disabled={isSubmitting || !form.formState.isValid}\n          >\n            {isSubmitting ? (\n              <>\n                <Loader2 className=\"mr-2 h-4 w-4 animate-spin\" />\n                Creating account...\n              </>\n            ) : 'Create account'}\n          </Button>\n        </Form>\n      </CardContent>\n      <CardFooter>\n        <p className=\"text-sm text-muted-foreground\">\n          Already have an account?{' '}\n          <Link href=\"/login\" className=\"text-primary hover:underline font-medium\">\n            Sign in\n          </Link>\n        </p>\n      </CardFooter>\n    </Card>\n    <LegalFooter />\n  </AuthLayout>\n</RegisterPage>\n```\n\n**Zod Form Schema:**\n\n```typescript\nexport const registerSchema = z\n  .object({\n    fullName: z\n      .string()\n      .min(1, 'Full name is required')\n      .min(2, 'Name must be at least 2 characters')\n      .max(100, 'Name must be under 100 characters'),\n    email: z\n      .string()\n      .min(1, 'Email address is required')\n      .email('Enter a valid email address')\n      .transform((v) => v.toLowerCase().trim()),\n    password: z\n      .string()\n      .min(12, 'Password must be at least 12 characters')\n      .regex(/[A-Z]/, 'Must contain at least one uppercase letter')\n      .regex(/[a-z]/, 'Must contain at least one lowercase letter')\n      .regex(/[0-9]/, 'Must contain at least one number')\n      .regex(\n        /[!@#$%^&*()\\-_=+\\[\\]{};:'\",.<>?/\\\\|~]/,\n        'Must contain at least one special character'\n      ),\n    confirmPassword: z.string().min(1, 'Please confirm your password'),\n    termsAccepted: z.literal(true, {\n      errorMap: () => ({ message: 'You must accept the Terms of Service' }),\n    }),\n  })\n  .refine((data) => data.password === data.confirmPassword, {\n    message: 'Passwords do not match',\n    path: ['confirmPassword'],\n  });\n\nexport type RegisterFormValues = z.infer<typeof registerSchema>;\n```\n\n**`PasswordPolicyHelper` Sub-component:**\n\nThis renders below the password field as a checklist of requirements, each turning from `text-muted-foreground` to `text-green-600 dark:text-green-400` with a checkmark icon as the user types:\n\n```\n<PasswordPolicyHelper> renders:\n  [ ] / [x] At least 12 characters\n  [ ] / [x] One uppercase letter\n  [ ] / [x] One lowercase letter\n  [ ] / [x] One number\n  [ ] / [x] One special character\n```\n\nEach line is `text-xs` and toggles `text-muted-foreground` (unmet) vs `text-green-600` (met). Uses `aria-live=\"polite\"` on the container so screen readers announce changes as the user types.\n\n**State Management:**\n\n| State | Location | Purpose |\n|---|---|---|\n| `form` (react-hook-form) | Local `useForm()` with `mode: 'onBlur'` | Field values, validation per FR2 AC5 (validate on blur) |\n| `formError` | Local `useState<string \\| null>` | Server-returned registration errors |\n| `isSubmitting` | Derived from `form.formState.isSubmitting` | Loading state |\n| `watchedPassword` | `form.watch('password')` | Drives real-time `PasswordPolicyHelper` updates |\n\n**Error States:**\n\n| Error Condition | Display Type | Message |\n|---|---|---|\n| Field empty on blur | Inline | \"Full name is required\" / \"Email address is required\" etc. |\n| Password policy violation | Inline + PasswordPolicyHelper | Specific unmet rule highlighted in helper |\n| Passwords don't match | Inline (below confirm password) | \"Passwords do not match\" |\n| Terms not checked | Inline (below checkbox) | \"You must accept the Terms of Service\" |\n| Email already registered (server) | Banner | \"Unable to create account. Please try again or sign in.\" |\n| Server error | Toast | \"Something went wrong. Please try again later.\" |\n\n**Loading States:**\n\nButton changes to \"Creating account...\" with spinner. All inputs disabled. After success, a brief \"Redirecting...\" state before navigation to `/login/mfa-setup`.\n\n**Tab Order:**\n\n1. Full name input (autoFocus)\n2. Email input\n3. Password input\n4. Password visibility toggle\n5. Confirm password input\n6. Confirm password visibility toggle\n7. Terms of Service checkbox\n8. Terms of Service link\n9. Privacy Policy link\n10. \"Create account\" button\n11. \"Sign in\" link\n\n---\n\n### S3: MFA Challenge (`/login/mfa`)\n\n**Component Tree:**\n\n```\n<MFAChallengePage>\n  <AuthLayout>\n    <BrandHeader />\n    <Card className=\"shadow-card border-0 max-w-sm w-full\">\n      <CardHeader>\n        <CardTitle>Two-factor authentication</CardTitle>\n        <CardDescription>\n          Enter the 6-digit code from your authenticator app.\n        </CardDescription>\n      </CardHeader>\n      <CardContent>\n        <Form {...form}>\n          {formError && <FormBanner message={formError} />}\n          <FormField name=\"code\">\n            <FormItem className=\"flex flex-col items-center\">\n              <FormControl>\n                <InputOTP\n                  maxLength={6}\n                  pattern={REGEXP_ONLY_DIGITS}\n                  autoFocus\n                  onComplete={handleAutoSubmit}\n                >\n                  <InputOTPGroup>\n                    <InputOTPSlot index={0} />\n                    <InputOTPSlot index={1} />\n                    <InputOTPSlot index={2} />\n                  </InputOTPGroup>\n                  <InputOTPSeparator />\n                  <InputOTPGroup>\n                    <InputOTPSlot index={3} />\n                    <InputOTPSlot index={4} />\n                    <InputOTPSlot index={5} />\n                  </InputOTPGroup>\n                </InputOTP>\n              </FormControl>\n              <FormMessage />\n            </FormItem>\n          </FormField>\n          <Button\n            type=\"submit\"\n            className=\"w-full\"\n            disabled={isSubmitting || code.length < 6}\n          >\n            {isSubmitting ? (\n              <>\n                <Loader2 className=\"mr-2 h-4 w-4 animate-spin\" />\n                Verifying...\n              </>\n            ) : 'Verify'}\n          </Button>\n        </Form>\n      </CardContent>\n      <CardFooter className=\"flex-col gap-3\">\n        <Link\n          href=\"/login/mfa-recovery\"\n          className=\"text-sm text-muted-foreground hover:text-primary\"\n        >\n          Can't access your code? Use a recovery code\n        </Link>\n        <Link\n          href=\"/login\"\n          className=\"text-sm text-muted-foreground hover:text-primary flex items-center gap-1\"\n        >\n          <ArrowLeft className=\"h-3 w-3\" /> Back to sign in\n        </Link>\n      </CardFooter>\n    </Card>\n  </AuthLayout>\n</MFAChallengePage>\n```\n\n**shadcn/ui InputOTP Configuration:**\n\n| Prop | Value | Purpose |\n|---|---|---|\n| `maxLength` | `6` | 6-digit TOTP |\n| `pattern` | `REGEXP_ONLY_DIGITS` (from `input-otp`) | Restricts to numeric input |\n| `autoFocus` | `true` | First slot receives focus on mount |\n| `onComplete` | `handleAutoSubmit` callback | FR5 AC3: auto-submit when 6th digit entered |\n| Each `InputOTPSlot` | `className=\"h-12 w-12 text-lg\"` | 48x48px slots, exceeding 44px touch target |\n\n**Zod Form Schema:**\n\n```typescript\nexport const mfaChallengeSchema = z.object({\n  code: z\n    .string()\n    .length(6, 'Enter all 6 digits')\n    .regex(/^\\d{6}$/, 'Code must be 6 digits'),\n});\n\nexport type MFAChallengeFormValues = z.infer<typeof mfaChallengeSchema>;\n```\n\n**State Management:**\n\n| State | Location | Purpose |\n|---|---|---|\n| `form` | Local `useForm()` | OTP value |\n| `formError` | Local `useState<string \\| null>` | \"Unable to verify. Please try again.\" |\n| `isSubmitting` | Derived from form state | Loading |\n| `attemptCount` | Local `useRef<number>` | Track failures; at 5 redirect to `/account-locked` |\n\n**Auto-Submit Behavior:**\n\n```typescript\nconst handleAutoSubmit = useCallback(async (value: string) => {\n  if (value.length === 6) {\n    form.setValue('code', value);\n    await form.handleSubmit(onSubmit)();\n  }\n}, [form, onSubmit]);\n```\n\nOn failure, the `InputOTP` value is cleared programmatically via `form.reset({ code: '' })`, and focus returns to the first slot. This is accomplished by holding a ref to the `InputOTP` component and calling `.focus()` on the first slot after reset.\n\n**Error States:**\n\n| Error Condition | Display Type | Message |\n|---|---|---|\n| Wrong code | Banner + OTP clear | \"Unable to verify. Please try again.\" |\n| 5th consecutive failure | Redirect | Redirect to `/account-locked` |\n| Server error | Toast | \"Something went wrong. Please try again later.\" |\n\n**Loading States:**\n\nButton shows \"Verifying...\" with spinner. OTP inputs become disabled. On auto-submit, the visual feedback is immediate: all 6 slots lock (slight opacity reduction) and the spinner appears.\n\n**Tab Order:**\n\n1. OTP slot 1 (autoFocus; slots auto-advance, not separate tab stops)\n2. \"Verify\" button\n3. \"Use a recovery code\" link\n4. \"Back to sign in\" link\n\n---\n\n### S4: MFA Setup (`/login/mfa-setup`)\n\n**Component Tree (two phases -- Setup and Recovery Codes):**\n\n**Phase 1: QR Code + Verification**\n\n```\n<MFASetupPage>\n  <AuthLayout>\n    <BrandHeader />\n    <Card className=\"shadow-card border-0 max-w-[28rem] w-full\">\n      <CardHeader>\n        <CardTitle>Set up two-factor authentication</CardTitle>\n        <CardDescription>\n          Scan this QR code with your authenticator app\n          (Google Authenticator, Authy, or similar).\n        </CardDescription>\n      </CardHeader>\n      <CardContent className=\"flex flex-col items-center gap-6\">\n        <div className=\"rounded-lg border p-4 bg-white\">\n          <QRCodeImage\n            src={qrCodeDataUrl}\n            alt=\"TOTP QR code for authenticator app\"\n            width={200}\n            height={200}\n          />\n        </div>\n        <ManualKeyToggle>\n          <p className=\"text-sm text-muted-foreground\">\n            Can't scan? Enter this code manually:\n          </p>\n          <code className=\"font-mono text-sm tracking-wider select-all bg-muted px-3 py-2 rounded-md\">\n            {formattedSecret}   {/* e.g. \"JBSW Y3DP EHPK 3PXP\" */}\n          </code>\n          <Button\n            variant=\"ghost\"\n            size=\"sm\"\n            onClick={copySecretToClipboard}\n          >\n            <Copy className=\"h-3.5 w-3.5 mr-1\" /> Copy\n          </Button>\n        </ManualKeyToggle>\n        <div className=\"w-full\">\n          <p className=\"text-sm text-muted-foreground mb-3\">\n            Enter the 6-digit code to verify setup:\n          </p>\n          <Form {...form}>\n            <FormField name=\"code\">\n              <FormItem className=\"flex flex-col items-center\">\n                <FormControl>\n                  <InputOTP maxLength={6} pattern={REGEXP_ONLY_DIGITS} onComplete={handleAutoSubmit}>\n                    <InputOTPGroup>\n                      <InputOTPSlot index={0} />\n                      <InputOTPSlot index={1} />\n                      <InputOTPSlot index={2} />\n                    </InputOTPGroup>\n                    <InputOTPSeparator />\n                    <InputOTPGroup>\n                      <InputOTPSlot index={3} />\n                      <InputOTPSlot index={4} />\n                      <InputOTPSlot index={5} />\n                    </InputOTPGroup>\n                  </InputOTP>\n                </FormControl>\n                <FormMessage />\n              </FormItem>\n            </FormField>\n            <Button type=\"submit\" className=\"w-full mt-4\" disabled={isSubmitting}>\n              {isSubmitting ? (\n                <><Loader2 className=\"mr-2 h-4 w-4 animate-spin\" /> Verifying...</>\n              ) : 'Verify and enable'}\n            </Button>\n          </Form>\n        </div>\n      </CardContent>\n    </Card>\n  </AuthLayout>\n</MFASetupPage>\n```\n\n**Phase 2: Recovery Codes (shown after successful verification)**\n\n```\n<RecoveryCodesView>\n  <Card className=\"shadow-card border-0 max-w-[28rem] w-full\">\n    <CardHeader>\n      <CardTitle>Save your recovery codes</CardTitle>\n      <CardDescription>\n        If you lose access to your authenticator app, you can use\n        these codes to sign in. Each code can only be used once.\n      </CardDescription>\n    </CardHeader>\n    <CardContent>\n      <div className=\"rounded-md border bg-muted/50 p-4 font-mono text-sm space-y-1\">\n        {recoveryCodes.map((code) => (\n          <div key={code}>{code}</div>  // e.g. \"a1b2c-3d4e5\"\n        ))}\n      </div>\n      <div className=\"flex gap-3 mt-4\">\n        <Button variant=\"outline\" size=\"sm\" onClick={copyAllCodes}>\n          <Copy className=\"h-3.5 w-3.5 mr-1\" /> Copy\n        </Button>\n        <Button variant=\"outline\" size=\"sm\" onClick={downloadCodes}>\n          <Download className=\"h-3.5 w-3.5 mr-1\" /> Download\n        </Button>\n      </div>\n      <FormField name=\"savedConfirmation\">\n        <FormItem className=\"flex items-start gap-2 mt-6\">\n          <FormControl>\n            <Checkbox />\n          </FormControl>\n          <FormLabel className=\"text-sm font-normal\">\n            I've saved these codes\n          </FormLabel>\n        </FormItem>\n      </FormField>\n      <Button\n        className=\"w-full mt-4\"\n        disabled={!savedConfirmed}\n        onClick={handleContinue}\n      >\n        Continue\n      </Button>\n    </CardContent>\n  </Card>\n</RecoveryCodesView>\n```\n\n**State Management:**\n\n| State | Location | Purpose |\n|---|---|---|\n| `phase` | Local `useState<'setup' \\| 'recovery'>` | Controls which view is shown |\n| `qrCodeDataUrl` | Server data (fetched on mount) | Base64-encoded QR image from Keycloak TOTP setup API |\n| `totpSecret` | Server data | Base32 secret string for manual entry |\n| `recoveryCodes` | Server response (after verification) | Array of 5 recovery code strings |\n| `savedConfirmed` | Local `useState<boolean>` | Checkbox state; gates \"Continue\" button |\n| `manualKeyVisible` | Local `useState<boolean>` | Toggle for \"Can't scan?\" collapsible |\n\n**Tab Order (Phase 1):**\n\n1. QR code area (not interactive, skipped)\n2. \"Can't scan?\" toggle button\n3. Manual key copy button (when expanded)\n4. OTP slot 1 (auto-advance through 6)\n5. \"Verify and enable\" button\n\n**Tab Order (Phase 2):**\n\n1. \"Copy\" button\n2. \"Download\" button\n3. \"I've saved these codes\" checkbox\n4. \"Continue\" button\n\n---\n\n### S5: Forgot Password (`/forgot-password`)\n\n**Component Tree:**\n\n```\n<ForgotPasswordPage>\n  <AuthLayout>\n    <BrandHeader />\n    <Card className=\"shadow-card border-0 max-w-sm w-full\">\n      <CardHeader>\n        <CardTitle>Reset your password</CardTitle>\n        <CardDescription>\n          Enter the email address associated with your account\n          and we'll send you a link to reset your password.\n        </CardDescription>\n      </CardHeader>\n      <CardContent>\n        {!isSubmitted ? (\n          <Form {...form}>\n            <FormField name=\"email\">\n              <FormItem>\n                <FormLabel>Email address</FormLabel>\n                <FormControl>\n                  <Input type=\"email\" autoComplete=\"email\" autoFocus />\n                </FormControl>\n                <FormMessage />\n              </FormItem>\n            </FormField>\n            <Button type=\"submit\" className=\"w-full\" disabled={isSubmitting}>\n              {isSubmitting ? (\n                <><Loader2 className=\"mr-2 h-4 w-4 animate-spin\" /> Sending...</>\n              ) : 'Send reset link'}\n            </Button>\n          </Form>\n        ) : (\n          <ConfirmationMessage>\n            <CheckCircle className=\"h-8 w-8 text-primary mx-auto mb-3\" />\n            <p className=\"text-sm text-center text-muted-foreground\">\n              If an account exists with that email, you'll receive\n              a password reset link shortly.\n            </p>\n            <p className=\"text-xs text-center text-muted-foreground mt-2\">\n              Check your spam folder if you don't see it.\n            </p>\n          </ConfirmationMessage>\n        )}\n      </CardContent>\n      <CardFooter>\n        <Link href=\"/login\" className=\"text-sm text-muted-foreground hover:text-primary flex items-center gap-1\">\n          <ArrowLeft className=\"h-3 w-3\" /> Back to sign in\n        </Link>\n      </CardFooter>\n    </Card>\n  </AuthLayout>\n</ForgotPasswordPage>\n```\n\n**Zod Schema:**\n\n```typescript\nexport const forgotPasswordSchema = z.object({\n  email: z\n    .string()\n    .min(1, 'Email address is required')\n    .email('Enter a valid email address')\n    .transform((v) => v.toLowerCase().trim()),\n});\n```\n\n**State Management:**\n\n| State | Location | Purpose |\n|---|---|---|\n| `form` | Local `useForm()` | Email field value |\n| `isSubmitted` | Local `useState<boolean>` | Toggles between form view and confirmation view |\n| `isSubmitting` | Derived from form | Loading state |\n\n**Critical UX Decision:** The confirmation message is ALWAYS shown after submission, regardless of whether the email exists. Per FR10 AC2 and FR20, this prevents email enumeration. No error banner is ever shown for \"email not found.\"\n\n**Error States:**\n\n| Error Condition | Display Type | Message |\n|---|---|---|\n| Empty email | Inline | \"Email address is required\" |\n| Invalid email format | Inline | \"Enter a valid email address\" |\n| Server error (5xx) | Toast | \"Something went wrong. Please try again later.\" |\n| Rate limited (silent) | No error shown | Silently dropped per FR10 AC8 |\n\n---\n\n### S6: Reset Password (`/reset-password?token={token}`)\n\n**Component Tree:**\n\n```\n<ResetPasswordPage>\n  <AuthLayout>\n    <BrandHeader />\n    <Card className=\"shadow-card border-0 max-w-sm w-full\">\n      {tokenValid ? (\n        <>\n          <CardHeader>\n            <CardTitle>Create a new password</CardTitle>\n          </CardHeader>\n          <CardContent>\n            <Form {...form}>\n              {formError && <FormBanner message={formError} />}\n              <FormField name=\"password\">\n                <FormItem>\n                  <FormLabel>New password</FormLabel>\n                  <FormControl>\n                    <PasswordInput autoComplete=\"new-password\" autoFocus />\n                  </FormControl>\n                  <PasswordPolicyHelper password={watchedPassword} />\n                  <FormMessage />\n                </FormItem>\n              </FormField>\n              <FormField name=\"confirmPassword\">\n                <FormItem>\n                  <FormLabel>Confirm new password</FormLabel>\n                  <FormControl>\n                    <PasswordInput autoComplete=\"new-password\" />\n                  </FormControl>\n                  <FormMessage />\n                </FormItem>\n              </FormField>\n              <Button type=\"submit\" className=\"w-full\" disabled={isSubmitting}>\n                {isSubmitting ? (\n                  <><Loader2 className=\"mr-2 h-4 w-4 animate-spin\" /> Resetting...</>\n                ) : 'Reset password'}\n              </Button>\n            </Form>\n          </CardContent>\n        </>\n      ) : (\n        <>\n          <CardHeader>\n            <CardTitle>Link expired</CardTitle>\n          </CardHeader>\n          <CardContent>\n            <p className=\"text-sm text-muted-foreground\">\n              This reset link has expired or has already been used.\n              Please request a new one.\n            </p>\n            <Button asChild variant=\"outline\" className=\"w-full mt-4\">\n              <Link href=\"/forgot-password\">Request new link</Link>\n            </Button>\n          </CardContent>\n        </>\n      )}\n    </Card>\n  </AuthLayout>\n</ResetPasswordPage>\n```\n\n**Zod Schema:**\n\n```typescript\nexport const resetPasswordSchema = z\n  .object({\n    password: z\n      .string()\n      .min(12, 'Password must be at least 12 characters')\n      .regex(/[A-Z]/, 'Must contain at least one uppercase letter')\n      .regex(/[a-z]/, 'Must contain at least one lowercase letter')\n      .regex(/[0-9]/, 'Must contain at least one number')\n      .regex(\n        /[!@#$%^&*()\\-_=+\\[\\]{};:'\",.<>?/\\\\|~]/,\n        'Must contain at least one special character'\n      ),\n    confirmPassword: z.string().min(1, 'Please confirm your password'),\n  })\n  .refine((data) => data.password === data.confirmPassword, {\n    message: 'Passwords do not match',\n    path: ['confirmPassword'],\n  });\n```\n\n**State Management:**\n\n| State | Location | Purpose |\n|---|---|---|\n| `tokenValid` | Server-side validated (passed as prop or fetched on mount) | Determines which view to show |\n| `form` | Local `useForm()` | Password fields |\n| `formError` | Local `useState<string \\| null>` | Server-side password policy violations (breach list, personal data check) |\n\n**Post-Success:** Redirect to `/login` with a Sonner toast: \"Password updated. Please sign in with your new password.\"\n\n---\n\n### S7: Session Timeout Warning (Modal Overlay)\n\n**Component Tree:**\n\n```\n<SessionTimeoutWarning>\n  <AlertDialog open={isVisible} onOpenChange={() => {}}>  {/* not dismissable */}\n    <AlertDialogContent\n      className=\"max-w-sm\"\n      onEscapeKeyDown={(e) => e.preventDefault()}      {/* block Escape */}\n      onPointerDownOutside={(e) => e.preventDefault()}  {/* block outside click */}\n    >\n      <AlertDialogHeader>\n        <AlertDialogTitle>Session expiring</AlertDialogTitle>\n        <AlertDialogDescription>\n          You'll be automatically signed out in{' '}\n          <span className=\"font-semibold tabular-nums\" aria-live=\"assertive\" role=\"timer\">\n            {formatTime(secondsRemaining)}\n          </span>\n          {' '}due to inactivity.\n        </AlertDialogDescription>\n      </AlertDialogHeader>\n      <AlertDialogFooter>\n        <AlertDialogCancel onClick={handleSignOut}>\n          Sign out\n        </AlertDialogCancel>\n        <AlertDialogAction onClick={handleStayIn} autoFocus>\n          Stay in\n        </AlertDialogAction>\n      </AlertDialogFooter>\n    </AlertDialogContent>\n  </AlertDialog>\n</SessionTimeoutWarning>\n```\n\n**Critical AlertDialog Props:**\n\n- `open={isVisible}` -- controlled by session timer logic\n- `onOpenChange` is a no-op function -- prevents the dialog from being closed by any built-in mechanism\n- `onEscapeKeyDown` calls `preventDefault()` -- blocks Escape key dismissal (FR7 AC5)\n- `onPointerDownOutside` calls `preventDefault()` -- blocks click-outside dismissal (FR7 AC5)\n- `AlertDialogAction` (\"Stay in\") has `autoFocus` -- focused by default per accessibility best practice (primary safe action)\n\n**State Management:**\n\n| State | Location | Purpose |\n|---|---|---|\n| `isVisible` | `SessionProvider` context (or `useSession()` hook) | Controlled by idle timer reaching 2-minute threshold |\n| `secondsRemaining` | Local `useState<number>`, decremented via `setInterval(1000)` | Live countdown |\n| `idleTimerRef` | `useRef` inside `SessionProvider` | Tracks last activity timestamp |\n\n**Timer Logic (inside `SessionProvider`):**\n\n```typescript\n// Simplified logic outline\nconst IDLE_TIMEOUT_MS = 15 * 60 * 1000;       // 15 minutes\nconst WARNING_LEAD_MS = 2 * 60 * 1000;        // 2 minutes before\nconst TIMER_OFFSET_MS = 5 * 1000;             // 5s ahead of server (EC5)\n\n// Activity listener resets lastActivity on mouse, keyboard, touch, scroll\n// Check every second:\n// - If (now - lastActivity) >= (IDLE_TIMEOUT_MS - WARNING_LEAD_MS - TIMER_OFFSET_MS):\n//     show warning, start countdown\n// - If countdown reaches 0: auto-logout\n\n// Multi-tab sync via BroadcastChannel:\nconst channel = new BroadcastChannel('healthgate-session');\nchannel.onmessage = (event) => {\n  if (event.data.type === 'SESSION_EXTENDED') resetIdleTimer();\n  if (event.data.type === 'SESSION_EXPIRED') performLogout();\n};\n```\n\n**Error States:**\n\n| Error Condition | Display Type | Message |\n|---|---|---|\n| \"Stay in\" fails (server session already expired) | Redirect | Redirect to `/session-expired` |\n| Network error on \"Stay in\" | Toast + retry | Toast: \"Unable to extend session. Retrying...\" Auto-retry once. On second failure: redirect to `/session-expired` |\n\n---\n\n### S8: Session Expired (`/session-expired`)\n\n**Component Tree:**\n\n```\n<SessionExpiredPage>\n  <AuthLayout>\n    <BrandHeader />\n    <Card className=\"shadow-card border-0 max-w-sm w-full\">\n      <CardHeader className=\"items-center\">\n        <Clock className=\"h-10 w-10 text-muted-foreground mb-2\" />\n        <CardTitle>Your session has ended</CardTitle>\n        <CardDescription className=\"text-center\">\n          {reason === 'idle'\n            ? 'For your security, you were automatically signed out due to inactivity.'\n            : 'Please sign in again.'}\n        </CardDescription>\n      </CardHeader>\n      <CardContent>\n        <Button asChild className=\"w-full\">\n          <Link href={`/login${redirectUri ? `?redirect=${encodeURIComponent(redirectUri)}` : ''}`}>\n            Sign in again\n          </Link>\n        </Button>\n      </CardContent>\n    </Card>\n  </AuthLayout>\n</SessionExpiredPage>\n```\n\n**State Management:**\n\nMinimal. `reason` and `redirectUri` are derived from URL search params set during the logout redirect. No form state.\n\n---\n\n### S9: Dashboard (`/dashboard`) -- Protected\n\n**Component Tree:**\n\n```\n<ProtectedRoute>\n  <DashboardLayout>\n    <header className=\"flex items-center justify-between p-4 border-b\">\n      <BrandHeader variant=\"compact\" />\n      <UserMenu />                          // Dropdown: name, email, role, \"Sign out\"\n    </header>\n    <main className=\"p-8\">\n      <h1 className=\"font-heading text-2xl\">Dashboard</h1>\n      <p className=\"text-muted-foreground mt-2\">\n        You're signed in as {user.name}.\n      </p>\n      {/* Placeholder content for V1 */}\n    </main>\n    <SessionTimeoutWarning />               // Always mounted when authenticated\n    <Toaster />                             // Sonner toast container\n  </DashboardLayout>\n</ProtectedRoute>\n```\n\n**`UserMenu` Sub-component:**\n\n```\n<DropdownMenu>\n  <DropdownMenuTrigger asChild>\n    <Button variant=\"ghost\" className=\"flex items-center gap-2\">\n      <Avatar className=\"h-8 w-8\">\n        <AvatarFallback>{initials}</AvatarFallback>\n      </Avatar>\n      <span className=\"text-sm hidden sm:inline\">{user.name}</span>\n      <ChevronDown className=\"h-4 w-4\" />\n    </Button>\n  </DropdownMenuTrigger>\n  <DropdownMenuContent align=\"end\">\n    <DropdownMenuLabel>\n      <div>{user.name}</div>\n      <div className=\"text-xs text-muted-foreground\">{user.email}</div>\n    </DropdownMenuLabel>\n    <DropdownMenuSeparator />\n    <DropdownMenuItem onClick={handleSignOut}>\n      <LogOut className=\"mr-2 h-4 w-4\" /> Sign out\n    </DropdownMenuItem>\n  </DropdownMenuContent>\n</DropdownMenu>\n```\n\n---\n\n### S10: Account Locked (`/account-locked`)\n\n**Component Tree:**\n\n```\n<AccountLockedPage>\n  <AuthLayout>\n    <BrandHeader />\n    <Card className=\"shadow-card border-0 max-w-sm w-full\">\n      <CardHeader className=\"items-center\">\n        <ShieldAlert className=\"h-10 w-10 text-destructive mb-2\" />\n        <CardTitle>Account temporarily locked</CardTitle>\n        <CardDescription className=\"text-center\">\n          For your security, this account has been locked after\n          multiple failed sign-in attempts.\n        </CardDescription>\n      </CardHeader>\n      <CardContent className=\"space-y-4\">\n        <p className=\"text-sm text-muted-foreground text-center\">\n          Try again in 15 minutes, or reset your password.\n        </p>\n        <Button asChild className=\"w-full\">\n          <Link href=\"/forgot-password\">Reset password</Link>\n        </Button>\n      </CardContent>\n      <CardFooter>\n        <Link href=\"/login\" className=\"text-sm text-muted-foreground hover:text-primary flex items-center gap-1\">\n          <ArrowLeft className=\"h-3 w-3\" /> Back to sign in\n        </Link>\n      </CardFooter>\n    </Card>\n  </AuthLayout>\n</AccountLockedPage>\n```\n\n**Note:** Per FR12 AC3, the message intentionally does NOT say \"after 5 failed attempts\" to avoid confirming the exact threshold to attackers.\n\n---\n\n## 2. Keycloak <-> UI Flow Mapping\n\n### 2a. Login Flow (OIDC Authorization Code + PKCE)\n\n**Step-by-step sequence:**\n\n```\nUser Browser                  Next.js BFF                     Keycloak\n    |                              |                              |\n    |  1. GET /login               |                              |\n    |  <--- render login form -----|                              |\n    |                              |                              |\n    |  2. POST /api/auth/login     |                              |\n    |     { email, password }      |                              |\n    |  --------------------------->|                              |\n    |                              |  3. Generate PKCE:           |\n    |                              |     code_verifier (random)   |\n    |                              |     code_challenge =         |\n    |                              |       SHA256(code_verifier)  |\n    |                              |                              |\n    |                              |  4. Store code_verifier in   |\n    |                              |     HttpOnly cookie (5min)   |\n    |                              |                              |\n    |                              |  5. POST /realms/{realm}/    |\n    |                              |     protocol/openid-connect/ |\n    |                              |     auth                     |\n    |                              |     ?response_type=code      |\n    |                              |     &client_id={client}      |\n    |                              |     &redirect_uri={callback} |\n    |                              |     &scope=openid profile    |\n    |                              |     &state={csrf_state}      |\n    |                              |     &code_challenge={hash}   |\n    |                              |     &code_challenge_method=  |\n    |                              |       S256                   |\n    |                              |  --------------------------->|\n    |                              |                              |\n    |                              |     (Keycloak validates      |\n    |                              |      credentials internally) |\n    |                              |                              |\n    |                              |  6a. If MFA required:        |\n    |                              |  <-- 302 to Keycloak MFA ----|\n    |  <-- redirect to /login/mfa -|  (or Next.js detects         |\n    |                              |   required_action in         |\n    |                              |   response and renders MFA)  |\n    |                              |                              |\n    |                              |  6b. If no MFA / MFA passed: |\n    |                              |  <-- 302 + auth code --------|\n    |                              |                              |\n    |                              |  7. POST /realms/{realm}/    |\n    |                              |     protocol/openid-connect/ |\n    |                              |     token                    |\n    |                              |     grant_type=              |\n    |                              |       authorization_code     |\n    |                              |     code={auth_code}         |\n    |                              |     code_verifier=           |\n    |                              |       {from_cookie}          |\n    |                              |     redirect_uri={callback}  |\n    |                              |     client_id={client}       |\n    |                              |     client_secret={secret}   |\n    |                              |  --------------------------->|\n    |                              |                              |\n    |                              |  <-- { access_token,       --|\n    |                              |        refresh_token,        |\n    |                              |        id_token }            |\n    |                              |                              |\n    |                              |  8. Set encrypted HttpOnly   |\n    |                              |     cookies:                 |\n    |                              |     hg-access (5min MaxAge)  |\n    |                              |     hg-refresh (8h/30m)      |\n    |                              |     hg-id (session)          |\n    |                              |     Clear PKCE cookie        |\n    |                              |                              |\n    |  9. 302 to /dashboard        |                              |\n    |  <--- (or redirect_uri) -----|                              |\n    |                              |                              |\n```\n\n**Exact Keycloak Endpoints:**\n\n| Step | Endpoint | Method | Purpose |\n|---|---|---|---|\n| 5 | `{keycloakUrl}/realms/{realm}/protocol/openid-connect/auth` | GET (redirect) | Initiate OIDC auth |\n| 7 | `{keycloakUrl}/realms/{realm}/protocol/openid-connect/token` | POST | Exchange code for tokens |\n| (discovery) | `{keycloakUrl}/realms/{realm}/.well-known/openid-configuration` | GET | Discover all endpoint URLs |\n\n**Token Exchange Request Payload (Step 7):**\n\n```\nPOST /realms/healthgate-clinician/protocol/openid-connect/token\nContent-Type: application/x-www-form-urlencoded\n\ngrant_type=authorization_code\n&code=abc123...\n&redirect_uri=https://auth.googlehealth.com/api/auth/callback\n&client_id=healthgate-web\n&client_secret=xxxx\n&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk\n```\n\n**Token Exchange Response (Step 7):**\n\n```json\n{\n  \"access_token\": \"eyJhbG...\",\n  \"refresh_token\": \"eyJhbG...\",\n  \"id_token\": \"eyJhbG...\",\n  \"token_type\": \"Bearer\",\n  \"expires_in\": 300,\n  \"refresh_expires_in\": 28800,\n  \"session_state\": \"uuid-of-keycloak-session\",\n  \"scope\": \"openid profile email\"\n}\n```\n\n**What the User Sees at Each Step:**\n\n| Step | User Experience |\n|---|---|\n| 1 | Login form renders (< 500ms p50) |\n| 2 | Clicks \"Continue\" -- button shows \"Signing in...\" spinner |\n| 3-5 | No visible change; all server-side |\n| 6a | If MFA: redirected to MFA challenge screen (new page load, < 300ms) |\n| 6b | If no MFA: brief spinner continues |\n| 7-8 | No visible change; token exchange is back-channel |\n| 9 | Redirected to dashboard; spinner resolves |\n\n**Key Architectural Decision:** We use the \"BFF pattern\" (Backend for Frontend). The browser NEVER receives raw tokens. The Next.js API route (running server-side) performs the token exchange and sets encrypted HttpOnly cookies. This means the OIDC flow is NOT a pure client-side SPA redirect -- it is a server-mediated flow where `POST /api/auth/login` initiates the process and `GET /api/auth/callback` receives the authorization code.\n\n---\n\n### 2b. Registration Flow\n\n**Step-by-step sequence:**\n\n```\nUser Browser                  Next.js BFF                     Keycloak Admin API\n    |                              |                              |\n    |  1. GET /register            |                              |\n    |  <--- render register form --|                              |\n    |                              |                              |\n    |  2. POST /api/auth/register  |                              |\n    |     { fullName, email,       |                              |\n    |       password }             |                              |\n    |  --------------------------->|                              |\n    |                              |  3. POST /admin/realms/      |\n    |                              |     {realm}/users             |\n    |                              |     Authorization: Bearer     |\n    |                              |       {service_account_token} |\n    |                              |                              |\n    |                              |     {                        |\n    |                              |       \"firstName\": \"Maria\",  |\n    |                              |       \"lastName\": \"Rodriguez\"|\n    |                              |       \"email\": \"maria@...\",  |\n    |                              |       \"enabled\": true,       |\n    |                              |       \"emailVerified\": true, |\n    |                              |       \"credentials\": [{      |\n    |                              |         \"type\": \"password\",  |\n    |                              |         \"value\": \"...\",      |\n    |                              |         \"temporary\": false   |\n    |                              |       }],                    |\n    |                              |       \"requiredActions\": [   |\n    |                              |         \"CONFIGURE_TOTP\"     |\n    |                              |       ]                      |\n    |                              |     }                        |\n    |                              |  --------------------------->|\n    |                              |                              |\n    |                              |  <-- 201 Created             |\n    |                              |     Location: /users/{uuid}  |\n    |                              |                              |\n    |                              |  4. Initiate OIDC login flow |\n    |                              |     (same as login step 5-8) |\n    |                              |     with the new user creds  |\n    |                              |  --------------------------->|\n    |                              |                              |\n    |                              |  <-- Keycloak returns token  |\n    |                              |     but with required_action |\n    |                              |     CONFIGURE_TOTP           |\n    |                              |                              |\n    |  5. 302 to /login/mfa-setup  |                              |\n    |  <--- redirect --------------|                              |\n    |                              |                              |\n```\n\n**Exact Keycloak Endpoints:**\n\n| Step | Endpoint | Method |\n|---|---|---|\n| 3 | `{keycloakUrl}/admin/realms/{realm}/users` | POST |\n| 4 | Standard OIDC flow (see Login Flow steps 5-8) | GET/POST |\n\n**Request Payload (Step 3):**\n\n```json\n{\n  \"firstName\": \"Maria\",\n  \"lastName\": \"Rodriguez\",\n  \"email\": \"maria@example.com\",\n  \"username\": \"maria@example.com\",\n  \"enabled\": true,\n  \"emailVerified\": false,\n  \"credentials\": [\n    {\n      \"type\": \"password\",\n      \"value\": \"SecurePass123!\",\n      \"temporary\": false\n    }\n  ],\n  \"requiredActions\": [\"CONFIGURE_TOTP\"]\n}\n```\n\n**Error Response (409 Conflict -- email exists):**\n\n```json\n{\n  \"errorMessage\": \"User exists with same username\"\n}\n```\n\nThe BFF intercepts this and returns a generic message to the browser: \"Unable to create account. Please try again or sign in.\"\n\n**What the User Sees:**\n\n| Step | User Experience |\n|---|---|\n| 1 | Registration form renders |\n| 2 | Clicks \"Create account\" -- button shows \"Creating account...\" spinner |\n| 3-4 | Server-side; no visible change |\n| 5 | Redirected to MFA setup screen with QR code |\n\n---\n\n### 2c. MFA Challenge Flow\n\n**Step-by-step sequence:**\n\nThere are two implementation approaches for MFA with Keycloak. Since we are using the BFF pattern and want full control over the UI, we use Keycloak's **Authentication SPI with a custom REST endpoint** rather than Keycloak's hosted login pages.\n\n```\nUser Browser                  Next.js BFF                     Keycloak\n    |                              |                              |\n    |  (After login step 6a:       |                              |\n    |   BFF detected               |                              |\n    |   required_action or         |                              |\n    |   OTP_CREDENTIAL needed)     |                              |\n    |                              |                              |\n    |  1. GET /login/mfa           |                              |\n    |  <--- render MFA form -------|                              |\n    |     (session token stored    |                              |\n    |      in HttpOnly cookie      |                              |\n    |      hg-mfa-session)         |                              |\n    |                              |                              |\n    |  2. POST /api/auth/mfa       |                              |\n    |     { code: \"123456\" }       |                              |\n    |  --------------------------->|                              |\n    |                              |  3. POST /realms/{realm}/    |\n    |                              |     protocol/openid-connect/ |\n    |                              |     token                    |\n    |                              |     grant_type=password      |\n    |                              |     (with OTP credential)    |\n    |                              |                              |\n    |                              |     OR via Keycloak's        |\n    |                              |     Authentication Flow API: |\n    |                              |     POST /realms/{realm}/    |\n    |                              |     login-actions/           |\n    |                              |     authenticate             |\n    |                              |     ?session_code={code}     |\n    |                              |     &execution={otp_exec_id} |\n    |                              |     &client_id={client}      |\n    |                              |                              |\n    |                              |     Body: { otp: \"123456\" }  |\n    |                              |  --------------------------->|\n    |                              |                              |\n    |                              |  4a. Valid code:             |\n    |                              |  <-- tokens issued ----------|\n    |                              |                              |\n    |                              |  4b. Invalid code:           |\n    |                              |  <-- 401 invalid_otp --------|\n    |                              |                              |\n    |  5a. 302 to /dashboard       |                              |\n    |  <--- (set token cookies) ---|                              |\n    |                              |                              |\n    |  5b. Re-render with error    |                              |\n    |  <--- \"Unable to verify...\" -|                              |\n    |                              |                              |\n```\n\n**What the User Sees:**\n\n| Step | User Experience |\n|---|---|\n| 1 | MFA challenge form with 6 OTP input boxes |\n| 2 | User enters digits; on 6th digit, form auto-submits. Boxes lock, spinner appears |\n| 4a | Brief \"Verifying...\" then redirect to dashboard |\n| 4b | Error banner \"Unable to verify. Please try again.\" OTP cleared, focus returns to first digit |\n\n---\n\n### 2d. Password Reset Flow\n\n**Step-by-step sequence:**\n\n```\nUser Browser                  Next.js BFF                     Keycloak\n    |                              |                              |\n    |  1. GET /forgot-password     |                              |\n    |  <--- render form ---------- |                              |\n    |                              |                              |\n    |  2. POST /api/auth/          |                              |\n    |     forgot-password          |                              |\n    |     { email }                |                              |\n    |  --------------------------->|                              |\n    |                              |  3. PUT /admin/realms/       |\n    |                              |     {realm}/users/{id}/      |\n    |                              |     execute-actions-email    |\n    |                              |                              |\n    |                              |     Body: [\"UPDATE_PASSWORD\"]|\n    |                              |     Query: ?lifespan=900     |\n    |                              |       (15 min in seconds)    |\n    |                              |                              |\n    |                              |     Note: BFF first looks up |\n    |                              |     user by email via:       |\n    |                              |     GET /admin/realms/       |\n    |                              |     {realm}/users            |\n    |                              |     ?email={email}&exact=true|\n    |                              |                              |\n    |                              |     If user not found: BFF   |\n    |                              |     returns success anyway   |\n    |                              |     (prevent enumeration)    |\n    |                              |  --------------------------->|\n    |                              |                              |\n    |                              |  <-- 204 No Content ---------|\n    |                              |     (Keycloak sends email)   |\n    |                              |                              |\n    |  4. Show confirmation        |                              |\n    |  <--- \"If an account...\" ----|                              |\n    |                              |                              |\n    |  === USER CHECKS EMAIL ===   |                              |\n    |                              |                              |\n    |  5. Clicks link in email:    |                              |\n    |     https://auth.google      |                              |\n    |     health.com/reset-        |                              |\n    |     password?token={kc_token}|                              |\n    |  --------------------------->|                              |\n    |                              |  6. Validate token:          |\n    |                              |     GET /realms/{realm}/     |\n    |                              |     login-actions/           |\n    |                              |     action-token?key={token} |\n    |                              |  --------------------------->|\n    |                              |  <-- token valid/invalid ----|\n    |                              |                              |\n    |  7a. Token valid:            |                              |\n    |  <--- render reset form -----|                              |\n    |                              |                              |\n    |  7b. Token invalid/expired:  |                              |\n    |  <--- render expired view ---|                              |\n    |                              |                              |\n    |  8. POST /api/auth/          |                              |\n    |     reset-password           |                              |\n    |     { token, newPassword }   |                              |\n    |  --------------------------->|                              |\n    |                              |  9. POST token endpoint      |\n    |                              |     with the action token    |\n    |                              |     to set new password      |\n    |                              |                              |\n    |                              |     PUT /admin/realms/       |\n    |                              |     {realm}/users/{id}/      |\n    |                              |     reset-password           |\n    |                              |     { \"type\":\"password\",     |\n    |                              |       \"value\":\"NewPass!\",    |\n    |                              |       \"temporary\":false }    |\n    |                              |  --------------------------->|\n    |                              |                              |\n    |                              |  10. Terminate all sessions: |\n    |                              |     DELETE /admin/realms/    |\n    |                              |     {realm}/users/{id}/      |\n    |                              |     sessions                 |\n    |                              |  --------------------------->|\n    |                              |                              |\n    |  11. 302 to /login +         |                              |\n    |      toast \"Password updated\"|                              |\n    |  <--- redirect --------------|                              |\n```\n\n**Exact Keycloak Endpoints:**\n\n| Step | Endpoint | Method | Purpose |\n|---|---|---|---|\n| 3 (lookup) | `/admin/realms/{realm}/users?email={email}&exact=true` | GET | Find user by email |\n| 3 (action) | `/admin/realms/{realm}/users/{id}/execute-actions-email?lifespan=900` | PUT | Trigger reset email |\n| 9 | `/admin/realms/{realm}/users/{id}/reset-password` | PUT | Set new password |\n| 10 | `/admin/realms/{realm}/users/{id}/sessions` | DELETE | Kill all sessions |\n\n---\n\n## 3. React Component API Specifications (SDK: `@healthgate/react`)\n\n### 3a. `<HealthGateLogin />`\n\n```typescript\ninterface HealthGateLoginProps {\n  /**\n   * Application name displayed in \"Sign in to continue to {appName}\"\n   * @default \"your account\"\n   */\n  appName?: string;\n\n  /**\n   * Whether to show the SSO/SAML button\n   * @default true\n   */\n  showSSO?: boolean;\n\n  /**\n   * Whether to show the \"Sign up\" registration link\n   * @default true\n   */\n  showRegistration?: boolean;\n\n  /**\n   * Callback fired after successful authentication\n   * Receives the authenticated user object\n   */\n  onSuccess?: (user: HealthGateUser) => void;\n\n  /**\n   * Callback fired on authentication error\n   */\n  onError?: (error: HealthGateError) => void;\n\n  /**\n   * Override the post-login redirect URL\n   * @default window.location.origin + \"/dashboard\"\n   */\n  redirectUri?: string;\n\n  /**\n   * Custom CSS class applied to the outermost container\n   */\n  className?: string;\n\n  /**\n   * Override default brand logo\n   * Pass a React node (e.g., <img> or SVG component)\n   */\n  logo?: React.ReactNode;\n\n  /**\n   * Additional footer content (e.g., custom legal notices)\n   */\n  footerContent?: React.ReactNode;\n}\n\n// Usage:\n<HealthGateLogin\n  appName=\"Clinical Decision Support\"\n  showSSO={true}\n  onSuccess={(user) => router.push('/dashboard')}\n  onError={(err) => console.error(err)}\n/>\n```\n\n### 3b. `<HealthGateProvider />`\n\n```typescript\ninterface HealthGateProviderProps {\n  /**\n   * Keycloak server URL (e.g., \"https://auth.googlehealth.com\")\n   */\n  keycloakUrl: string;\n\n  /**\n   * Keycloak realm name (e.g., \"healthgate-clinician\")\n   */\n  realm: string;\n\n  /**\n   * OIDC client ID registered in Keycloak\n   */\n  clientId: string;\n\n  /**\n   * Idle timeout in minutes before session warning\n   * @default 15\n   */\n  idleTimeoutMinutes?: number;\n\n  /**\n   * Minutes before idle timeout to show warning dialog\n   * @default 2\n   */\n  sessionWarningMinutes?: number;\n\n  /**\n   * Callback when session expires (idle or max lifetime)\n   */\n  onSessionExpired?: () => void;\n\n  /**\n   * Callback when an auth error occurs (token refresh failure, etc.)\n   */\n  onAuthError?: (error: HealthGateError) => void;\n\n  /**\n   * URL to redirect to when unauthenticated\n   * @default \"/login\"\n   */\n  loginUrl?: string;\n\n  /**\n   * React children\n   */\n  children: React.ReactNode;\n}\n\n// Context value shape (internal, not exported as a prop):\ninterface HealthGateContextValue {\n  user: HealthGateUser | null;\n  isAuthenticated: boolean;\n  isLoading: boolean;\n  token: string | null;                   // access token (short-lived, for API calls)\n  login: (options?: LoginOptions) => void;\n  logout: () => Promise<void>;\n  refresh: () => Promise<void>;\n  roles: string[];\n  hasRole: (roleName: string) => boolean;\n  session: {\n    expiresAt: Date | null;\n    idleTimeRemaining: number;            // seconds\n    isSessionWarningVisible: boolean;\n    extendSession: () => Promise<void>;\n  };\n}\n\n// Usage:\n<HealthGateProvider\n  keycloakUrl=\"https://auth.googlehealth.com\"\n  realm=\"healthgate-clinician\"\n  clientId=\"clinical-decision-support\"\n  idleTimeoutMinutes={15}\n  sessionWarningMinutes={2}\n  onSessionExpired={() => router.push('/session-expired')}\n>\n  <App />\n</HealthGateProvider>\n```\n\n### 3c. `useAuth()` Hook\n\n```typescript\ninterface UseAuthReturn {\n  /**\n   * The authenticated user, or null if not logged in\n   */\n  user: HealthGateUser | null;\n\n  /**\n   * Whether the user is authenticated (has valid tokens)\n   */\n  isAuthenticated: boolean;\n\n  /**\n   * Whether the auth state is being determined (initial load, token refresh)\n   */\n  isLoading: boolean;\n\n  /**\n   * The current access token for API calls.\n   * WARNING: This is the decrypted token for authorized API calls only.\n   * Never store this in localStorage or pass to untrusted code.\n   */\n  token: string | null;\n\n  /**\n   * Initiates the login flow. Redirects to HealthGate login page.\n   * @param options.redirectUri - Where to redirect after login\n   */\n  login: (options?: { redirectUri?: string }) => void;\n\n  /**\n   * Logs the user out. Clears all session state and redirects to login.\n   * Calls Keycloak end_session_endpoint for SSO logout propagation.\n   */\n  logout: () => Promise<void>;\n\n  /**\n   * Manually triggers a token refresh. Normally automatic.\n   * Throws HealthGateError if refresh fails after retries.\n   */\n  refresh: () => Promise<void>;\n}\n\n// Usage:\nfunction DashboardHeader() {\n  const { user, isAuthenticated, isLoading, logout } = useAuth();\n\n  if (isLoading) return <Skeleton className=\"h-8 w-32\" />;\n  if (!isAuthenticated) return null;\n\n  return (\n    <div>\n      Welcome, {user.name}\n      <Button variant=\"ghost\" onClick={logout}>Sign out</Button>\n    </div>\n  );\n}\n```\n\n### 3d. `useSession()` Hook\n\n```typescript\ninterface UseSessionReturn {\n  /**\n   * Absolute expiration time of the current session\n   */\n  expiresAt: Date | null;\n\n  /**\n   * Seconds remaining before idle timeout triggers\n   * Updates every second when warning is visible\n   */\n  idleTimeRemaining: number;\n\n  /**\n   * Whether the session timeout warning dialog is currently visible\n   */\n  isSessionWarningVisible: boolean;\n\n  /**\n   * Extends the session by resetting the idle timer.\n   * Calls the server to refresh the session.\n   * Throws HealthGateError if the session has already expired server-side.\n   */\n  extendSession: () => Promise<void>;\n\n  /**\n   * The Keycloak session ID (for audit correlation)\n   */\n  sessionId: string | null;\n}\n\n// Usage:\nfunction SessionInfo() {\n  const { idleTimeRemaining, isSessionWarningVisible, extendSession } = useSession();\n\n  return (\n    <>\n      <p>Session active. Idle timeout in {idleTimeRemaining}s</p>\n      {isSessionWarningVisible && (\n        <Button onClick={extendSession}>Stay signed in</Button>\n      )}\n    </>\n  );\n}\n```\n\n### 3e. `withAuth()` HOC\n\n```typescript\ninterface WithAuthOptions {\n  /**\n   * Required roles. User must have ALL specified roles.\n   * Uses realm roles by default.\n   */\n  requiredRoles?: string[];\n\n  /**\n   * URL to redirect to when not authenticated\n   * @default \"/login\"\n   */\n  loginUrl?: string;\n\n  /**\n   * URL to redirect to when authenticated but missing required roles\n   * @default renders a 403 \"no permission\" message\n   */\n  unauthorizedUrl?: string;\n\n  /**\n   * Component to render while auth state is loading\n   * @default full-page centered spinner\n   */\n  loadingComponent?: React.ComponentType;\n}\n\n/**\n * Higher-order component that protects a page component.\n * Redirects to login if unauthenticated.\n * Shows 403 if authenticated but missing required roles.\n */\nfunction withAuth<P extends object>(\n  Component: React.ComponentType<P & { user: HealthGateUser }>,\n  options?: WithAuthOptions\n): React.ComponentType<P>;\n\n// Usage:\nfunction AdminPage({ user }: { user: HealthGateUser }) {\n  return <div>Welcome admin {user.name}</div>;\n}\n\nexport default withAuth(AdminPage, {\n  requiredRoles: ['healthgate-admin'],\n  unauthorizedUrl: '/unauthorized',\n});\n```\n\n### Shared TypeScript Interfaces\n\n```typescript\ninterface HealthGateUser {\n  id: string;                             // Keycloak subject UUID\n  email: string;\n  name: string;\n  firstName: string;\n  lastName: string;\n  roles: string[];                        // all roles (realm + client, flattened)\n  realmRoles: string[];\n  clientRoles: Record<string, string[]>;  // { \"app-id\": [\"role1\", \"role2\"] }\n  mfaEnabled: boolean;\n  lastLogin: string;                      // ISO 8601\n  sessionId: string;\n}\n\ninterface HealthGateError {\n  code: HealthGateErrorCode;\n  message: string;\n  details?: Record<string, unknown>;\n}\n\ntype HealthGateErrorCode =\n  | 'INVALID_CREDENTIALS'\n  | 'ACCOUNT_LOCKED'\n  | 'MFA_REQUIRED'\n  | 'MFA_INVALID'\n  | 'SESSION_EXPIRED'\n  | 'TOKEN_REFRESH_FAILED'\n  | 'KEYCLOAK_UNREACHABLE'\n  | 'UNAUTHORIZED'\n  | 'FORBIDDEN'\n  | 'NETWORK_ERROR'\n  | 'UNKNOWN';\n\ninterface HealthGateConfig {\n  keycloakUrl: string;\n  realm: string;\n  clientId: string;\n  idleTimeoutMinutes: number;\n  sessionWarningMinutes: number;\n  onSessionExpired?: () => void;\n  onAuthError?: (error: HealthGateError) => void;\n}\n\ninterface LoginOptions {\n  redirectUri?: string;\n}\n```\n\n---\n\n## 4. Animation & Micro-interaction Specs\n\nAll animations respect `prefers-reduced-motion: reduce` by conditionally disabling them. When reduced motion is preferred, all transitions are instant (0ms duration).\n\n### 4.1 Page Transitions (Login -> MFA -> Dashboard)\n\n**Approach:** No full-page animations between auth screens. Each screen loads as a fresh route via Next.js App Router. The transition is a standard browser navigation (no client-side route animation). Rationale: auth screens must work without JavaScript (NFR10), and client-side transitions add complexity without meaningful UX gain in a sequential auth flow.\n\n**However**, within each page, the card content fades in on mount:\n\n```css\n@keyframes fadeInUp {\n  from {\n    opacity: 0;\n    transform: translateY(8px);\n  }\n  to {\n    opacity: 1;\n    transform: translateY(0);\n  }\n}\n\n.auth-card-enter {\n  animation: fadeInUp 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .auth-card-enter {\n    animation: none;\n    opacity: 1;\n  }\n}\n```\n\n### 4.2 Form Submission Loading States\n\n**Button Spinner:**\n\n```\n[Continue]  -->  [<spinner> Signing in...]  -->  [Continue]  (on error)\n                                               -->  [redirect] (on success)\n```\n\n- Spinner is `Loader2` from `lucide-react`, `h-4 w-4 animate-spin` (Tailwind's default spin: 1s linear infinite)\n- Transition to loading state is instant (no fade)\n- All form inputs are disabled via wrapping `<fieldset disabled>` -- this grays out the entire form consistently\n\n**Input Disable During Submit:**\n\nInputs receive `opacity-50 cursor-not-allowed` via the fieldset's disabled state (handled natively by the browser).\n\n### 4.3 Error Appearance\n\n**Inline Errors (field-level):**\n\n- Appear instantly on blur validation or on submit\n- No animation (per UX spec section 2.6: \"Input state changes: instant\")\n- Red text (`text-destructive`), `text-xs`, positioned directly below the input via `FormMessage`\n\n**Banner Errors (form-level):**\n\n```css\n@keyframes slideDown {\n  from {\n    opacity: 0;\n    max-height: 0;\n    margin-top: 0;\n  }\n  to {\n    opacity: 1;\n    max-height: 100px;\n    margin-top: 1rem;\n  }\n}\n\n.form-banner-enter {\n  animation: slideDown 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;\n  overflow: hidden;\n}\n```\n\n- Banner slides down from the top of the form content area\n- Background: `bg-destructive/10` (destructive color at 10% opacity), `border border-destructive/20`\n- Icon: `AlertCircle` in destructive color, left-aligned\n- Text: `text-sm text-destructive`\n\n**Toast Errors (system-level, Sonner):**\n\n- Sonner default animation: slides in from bottom-right\n- Auto-dismiss after 5 seconds for informational, 8 seconds for errors\n- Manual dismiss via close button\n- Sonner configuration:\n\n```typescript\n<Toaster\n  position=\"bottom-right\"\n  toastOptions={{\n    duration: 5000,\n    className: 'font-ui',\n    style: {\n      '--toast-bg': 'var(--card)',\n      '--toast-border': 'var(--border)',\n      '--toast-text': 'var(--foreground)',\n    },\n  }}\n/>\n```\n\n### 4.4 Session Timeout Countdown\n\n**Timer Display:**\n\n```\n<span className=\"font-semibold tabular-nums\">\n  {minutes}:{seconds.toString().padStart(2, '0')}\n</span>\n```\n\n- `tabular-nums` ensures digits don't cause layout shift as values change (monospaced numerals)\n- Updates every 1000ms via `setInterval`\n- No additional animation on the numbers themselves -- they simply change value\n\n**Dialog Entry Animation (AlertDialog from Radix):**\n\n- Overlay: fades in 150ms `ease-out` (Radix default)\n- Dialog: scales from 95% to 100% over 150ms `ease-out` (Radix default)\n- These match the UX spec's transition values (section 2.6: Transform 200ms)\n\n**When Timer Reaches 0:**\n\n- No special animation -- immediate redirect to `/session-expired`\n- The dialog closes as the page navigates away\n\n### 4.5 Password Strength / Policy Helper\n\n**PasswordPolicyHelper Animation:**\n\nEach requirement line has a checkmark icon and text. When a requirement transitions from unmet to met:\n\n```css\n.policy-check-met {\n  color: var(--green-600);\n  transition: color 150ms ease-out;\n}\n\n.policy-check-icon {\n  transition: transform 150ms ease-out, opacity 150ms ease-out;\n}\n\n.policy-check-icon-active {\n  transform: scale(1);\n  opacity: 1;\n}\n\n.policy-check-icon-inactive {\n  transform: scale(0.8);\n  opacity: 0.3;\n}\n```\n\nSubtle: the checkmark icon scales from 0.8 to 1.0 and opacity from 0.3 to 1.0 over 150ms when the criterion is met. The color transitions from `text-muted-foreground` to `text-green-600`.\n\n### 4.6 OTP Auto-Advance\n\nWhen the user types a digit in an OTP slot:\n- The digit appears instantly in the current slot\n- Focus advances to the next slot with no delay (handled natively by `input-otp`)\n- On the 6th digit entry: all slots briefly flash with a subtle border color change (`border-primary` for 200ms) before the auto-submit spinner appears. This gives a visual \"confirmation\" that all digits are entered.\n\n```css\n.otp-complete-flash .otp-slot {\n  border-color: var(--primary);\n  transition: border-color 200ms ease-out;\n}\n```\n\n### 4.7 Password Visibility Toggle\n\nWhen the eye icon is clicked:\n- Icon changes instantly between `Eye` and `EyeOff` (lucide-react icons)\n- No animation on icon swap\n- Input `type` toggles between `password` and `text`\n- 10-second auto-hide timer starts; when it fires, input reverts to `type=\"password\"` with no animation\n\n---\n\n## 5. Responsive Breakpoint Details\n\nAll screens use the **single centered column** layout (per UX spec section 7). There is no layout split at any breakpoint.\n\n### Global Layout Rules\n\n| Breakpoint | Container | Card Padding | Body Font Size |\n|---|---|---|---|\n| `<640px` (mobile) | `w-full px-4` (no max-width constraint) | `p-6` (24px) | `text-sm` (14px) |\n| `640-1024px` (tablet) | `max-w-sm` (384px), centered | `p-8` (32px) | `text-sm` (14px) |\n| `>1024px` (desktop) | `max-w-sm` (384px), centered | `p-8` (32px) | `text-sm` (14px) |\n\n### Per-Screen Breakpoint Specifics\n\n**S1 Login / S2 Register / S5 Forgot Password / S6 Reset Password / S10 Account Locked:**\n\n| Element | `<640px` | `640-1024px` | `>1024px` |\n|---|---|---|---|\n| Card width | `w-full` (full viewport minus `px-4`) | `max-w-sm` (384px) | `max-w-sm` (384px) |\n| Card padding | `p-6` | `p-8` | `p-8` |\n| Page title | `text-2xl` (24px) | `text-3xl` (30px) | `text-3xl` (30px) |\n| Input height | `h-11` (44px, touch target) | `h-10` (40px) | `h-10` (40px) |\n| Button height | `h-11` (44px, touch target) | `h-10` (40px) | `h-10` (40px) |\n| Logo size | 32px | 40px | 40px |\n| Footer text | `text-[11px]` | `text-xs` (12px) | `text-xs` (12px) |\n\n**S3 MFA Challenge / S4 MFA Setup:**\n\n| Element | `<640px` | `640-1024px` | `>1024px` |\n|---|---|---|---|\n| OTP slot size | `h-12 w-12` (48px, touch) | `h-12 w-12` (48px) | `h-12 w-12` (48px) |\n| OTP slot gap | `gap-2` (8px) | `gap-3` (12px) | `gap-3` (12px) |\n| QR code size | 180x180px | 200x200px | 200x200px |\n| Manual key text | `text-xs` | `text-sm` | `text-sm` |\n| Card width | `w-full` | `max-w-[28rem]` (448px) | `max-w-[28rem]` (448px) |\n\n**S7 Session Timeout Warning (AlertDialog):**\n\n| Element | `<640px` | `640-1024px` | `>1024px` |\n|---|---|---|---|\n| Dialog width | `w-[calc(100%-2rem)]` | `max-w-sm` (384px) | `max-w-sm` (384px) |\n| Button layout | Stacked vertically (`flex-col`) | Side by side (`flex-row`) | Side by side (`flex-row`) |\n| Button height | `h-11` (44px touch target) | `h-10` | `h-10` |\n\n**S9 Dashboard:**\n\n| Element | `<640px` | `640-1024px` | `>1024px` |\n|---|---|---|---|\n| Main content padding | `p-4` | `p-6` | `p-8` |\n| Header height | `h-14` (56px) | `h-16` (64px) | `h-16` (64px) |\n| User menu | Icon only (avatar) | Avatar + name | Avatar + name |\n\n### Touch Target Compliance\n\nPer WCAG 2.1 AAA (adopted as AA floor per UX spec and NFR3):\n\n- All interactive elements at `<640px` are minimum `44x44px`\n- Password eye toggle: `p-2` padding around icon (total tap area 44px)\n- Checkbox tap area: label click also toggles (via `htmlFor` association)\n- Links: `py-2` on mobile for sufficient tap height\n- OTP slots: `h-12 w-12` (48px) at all breakpoints\n\n---\n\n## 6. Accessibility Implementation Details\n\n### S1: Login Page\n\n**Tab Order (numbered):**\n\n1. Skip to content link (hidden until focused): `<a href=\"#login-form\" className=\"sr-only focus:not-sr-only\">`\n2. Email input (`autoFocus`)\n3. Password input\n4. Password visibility toggle (`<button aria-label=\"Show password\">`)\n5. \"Forgot password?\" link\n6. \"Continue\" submit button\n7. \"SSO / SAML\" button\n8. \"Sign up\" link\n9. HIPAA Notice footer link\n10. Privacy footer link\n11. Terms footer link\n\n**ARIA Attributes:**\n\n```html\n<form aria-label=\"Sign in\" noValidate>\n  <div role=\"alert\" aria-live=\"assertive\">\n    <!-- Form-level error banner renders here when present -->\n  </div>\n\n  <label htmlFor=\"login-email\">Email address</label>\n  <input\n    id=\"login-email\"\n    type=\"email\"\n    autoComplete=\"email\"\n    aria-required=\"true\"\n    aria-invalid={!!errors.email}\n    aria-describedby={errors.email ? \"login-email-error\" : undefined}\n  />\n  <p id=\"login-email-error\" role=\"alert\">{errors.email?.message}</p>\n\n  <label htmlFor=\"login-password\">Password</label>\n  <div className=\"relative\">\n    <input\n      id=\"login-password\"\n      type={showPassword ? \"text\" : \"password\"}\n      autoComplete=\"current-password\"\n      aria-required=\"true\"\n      aria-invalid={!!errors.password}\n      aria-describedby={errors.password ? \"login-password-error\" : undefined}\n    />\n    <button\n      type=\"button\"\n      aria-label={showPassword ? \"Hide password\" : \"Show password\"}\n      aria-pressed={showPassword}\n      tabIndex={0}\n    >\n      {showPassword ? <EyeOff /> : <Eye />}\n    </button>\n  </div>\n  <p id=\"login-password-error\" role=\"alert\">{errors.password?.message}</p>\n\n  <button type=\"submit\" aria-busy={isSubmitting}>\n    {isSubmitting ? \"Signing in...\" : \"Continue\"}\n  </button>\n</form>\n```\n\n**Screen Reader Announcements:**\n\n| Event | Method | Announcement |\n|---|---|---|\n| Error banner appears | `role=\"alert\"` + `aria-live=\"assertive\"` on banner container | \"Invalid email or password. Please try again.\" |\n| Field error on blur | `role=\"alert\"` on `FormMessage` | \"Enter a valid email address\" |\n| Loading state | `aria-busy=\"true\"` on submit button | Button text \"Signing in...\" is read |\n| Successful redirect | N/A (page navigation) | New page title announced |\n\n**Focus Management:**\n\n- On page load: email input receives focus (`autoFocus`)\n- On server error: focus moves to the error banner container\n- On field error after submit: focus moves to the first invalid field\n\n### S3: MFA Challenge\n\n**Tab Order:**\n\n1. OTP input (treated as single composite widget; internal navigation via arrow keys)\n2. \"Verify\" button\n3. \"Use a recovery code\" link\n4. \"Back to sign in\" link\n\n**ARIA Attributes:**\n\n```html\n<div role=\"group\" aria-label=\"6-digit verification code\">\n  <input\n    aria-label=\"Digit 1 of 6\"\n    inputMode=\"numeric\"\n    pattern=\"[0-9]\"\n    maxLength={1}\n  />\n  <!-- ... slots 2-6 with corresponding aria-label -->\n</div>\n```\n\nNote: shadcn's `InputOTP` component (built on `input-otp` library) handles these ARIA attributes internally. The library uses a single hidden input with a visual overlay, which provides correct screen reader behavior out of the box.\n\n**Screen Reader Announcements:**\n\n| Event | Method | Announcement |\n|---|---|---|\n| Code entered (auto-submit) | `aria-live=\"polite\"` on status region | \"Verifying code...\" |\n| Verification failed | `role=\"alert\"` on error banner | \"Unable to verify. Please try again.\" |\n| OTP cleared after error | Focus returned to first slot | Screen reader announces first slot label |\n\n### S7: Session Timeout Warning\n\n**ARIA Attributes:**\n\n```html\n<div\n  role=\"alertdialog\"\n  aria-modal=\"true\"\n  aria-label=\"Session expiring\"\n  aria-describedby=\"session-timeout-desc\"\n>\n  <h2 id=\"session-timeout-title\">Session expiring</h2>\n  <p id=\"session-timeout-desc\">\n    You'll be automatically signed out in\n    <span role=\"timer\" aria-live=\"assertive\" aria-atomic=\"true\">\n      {formatTime(secondsRemaining)}\n    </span>\n    due to inactivity.\n  </p>\n  <button autoFocus>Stay in</button>\n  <button>Sign out</button>\n</div>\n```\n\n**Critical:** The countdown uses `role=\"timer\"` with `aria-live=\"assertive\"`. However, announcing every second is excessive for screen readers. Implementation should throttle announcements:\n\n- Announce immediately when dialog opens\n- Announce at 1:00 remaining\n- Announce at 0:30 remaining\n- Announce at 0:10 remaining\n- Announce at 0:00 (session expired)\n\nThis is achieved by updating the `aria-live` region content only at those thresholds, while visually updating the timer every second.\n\n**Focus Management:**\n\n- When dialog opens: \"Stay in\" button receives focus (`autoFocus`)\n- Focus is trapped within the dialog (Radix AlertDialog handles this natively)\n- When dialog closes (via \"Stay in\"): focus returns to the element that was focused before the dialog opened\n\n### All Screens: Skip Link\n\nEvery auth page includes a skip link as the first focusable element:\n\n```html\n<a\n  href=\"#main-content\"\n  className=\"sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md\"\n>\n  Skip to main content\n</a>\n```\n\nThe target `#main-content` is placed on the card's content area (the form itself).\n\n---\n\n## 7. Dark Mode Token Mapping\n\nThe design system uses CSS custom properties that are swapped when the `.dark` class is applied to the `<html>` element. Below is the exact visual mapping per element category.\n\n### Login Page Background\n\n| Token | Light Mode | Dark Mode |\n|---|---|---|\n| `--background` | `oklch(0.978 0.008 85)` / `#faf9f5` (warm off-white) | `oklch(0.125 0.006 60)` / `#1f1e1d` (warm dark) |\n\n### Card / Form Area\n\n| Token | Light Mode | Dark Mode |\n|---|---|---|\n| `--card` | `oklch(0.978 0.008 85)` / `#faf9f5` (same as background; card floats via shadow) | `oklch(0.165 0.008 60)` / `#2a2928` (slightly lighter than background; elevated) |\n| `--card-foreground` | `oklch(0.110 0.006 60)` / `#141413` | `oklch(0.978 0.008 85)` / `#faf9f5` |\n| Card shadow | `0 2px 8px rgba(20,20,19,0.08)` | `0 2px 8px rgba(0,0,0,0.3)` (stronger shadow for contrast on dark bg) |\n\n### Input Fields\n\n| Property | Light Mode | Dark Mode |\n|---|---|---|\n| Border (`--input`) | `oklch(0.905 0.018 80)` / `#e8e6dc` (warm gray) | `oklch(1 0 0 / 15%)` / white at 15% opacity |\n| Background | `transparent` (inherits card) | `transparent` (inherits card) |\n| Text (`--foreground`) | `#141413` | `#faf9f5` |\n| Placeholder (`--muted-foreground`) | `#b0aea5` | `#b0aea5` (maintained in dark) |\n| Focus ring (`--ring`) | `oklch(0.700 0.140 45)` / `#d97757` | `oklch(0.700 0.140 45)` / `#d97757` (terracotta maintained) |\n| Error border (`--destructive`) | `#e5484d` | `#e5484d` (maintained) |\n\n### Buttons\n\n**Primary (Terracotta CTA):**\n\n| Property | Light Mode | Dark Mode |\n|---|---|---|\n| Background (`--primary`) | `#d97757` | `#d97757` (maintained) |\n| Text (`--primary-foreground`) | `#faf9f5` | `#faf9f5` (maintained) |\n| Hover | `#c15f3c` (darker terracotta) | `#c15f3c` (same) |\n| Shadow | `0 1px 2px rgba(20,20,19,0.06)` | `0 1px 2px rgba(0,0,0,0.2)` |\n\n**Secondary / Outline (SSO Button):**\n\n| Property | Light Mode | Dark Mode |\n|---|---|---|\n| Background | `transparent` | `transparent` |\n| Border | `--border` / `#e8e6dc` | `--border` / white at 12% |\n| Text | `--foreground` / `#141413` | `--foreground` / `#faf9f5` |\n| Hover background | `--accent` / `#f4f3ee` | `--accent` / `oklch(0.220 0.010 60)` / `#363534` |\n\n**Ghost (User Menu, Password Toggle):**\n\n| Property | Light Mode | Dark Mode |\n|---|---|---|\n| Background | `transparent` | `transparent` |\n| Text | `--foreground` | `--foreground` |\n| Hover background | `--accent` / `#f4f3ee` | `--accent` / `#363534` |\n\n### Error Text\n\n| Property | Light Mode | Dark Mode |\n|---|---|---|\n| Color (`--destructive`) | `oklch(0.577 0.245 27.325)` / `#e5484d` | `oklch(0.577 0.245 27.325)` / `#e5484d` (maintained -- red reads well on dark) |\n\n### Links\n\n| Property | Light Mode | Dark Mode |\n|---|---|---|\n| Default color (`--primary`) | `#d97757` | `#d97757` (maintained) |\n| Hover color | `#c15f3c` | `#c15f3c` |\n| Visited color | `#d97757` (no change -- security UX, don't reveal visited state) | `#d97757` |\n\n### Implementation Notes\n\nDark mode toggle is controlled by:\n1. User's system preference (`prefers-color-scheme: dark`) as default\n2. Optional explicit toggle (not in V1 auth screens -- inherits from consumer app or system)\n\n```css\n:root {\n  --background: oklch(0.978 0.008 85);\n  --foreground: oklch(0.110 0.006 60);\n  --card: oklch(0.978 0.008 85);\n  --primary: oklch(0.700 0.140 45);\n  /* ... all light tokens ... */\n}\n\n.dark {\n  --background: oklch(0.125 0.006 60);\n  --foreground: oklch(0.978 0.008 85);\n  --card: oklch(0.165 0.008 60);\n  --primary: oklch(0.700 0.140 45);  /* unchanged */\n  /* ... all dark tokens ... */\n}\n```\n\n---\n\n## 8. Edge Case UX\n\n### 8.1 What Happens if JavaScript is Disabled?\n\nPer NFR10: \"All authentication flows must function without JavaScript disabled, via server-side rendered fallback forms (progressive enhancement).\"\n\n**Implementation:**\n\n- Auth pages use Next.js App Router Server Components by default. The HTML form is fully rendered server-side.\n- The `<form>` element has a native `action` attribute pointing to the Next.js API route: `action=\"/api/auth/login\" method=\"POST\"`.\n- Without JavaScript: form submits as a standard HTML form POST. The server processes it and returns a redirect (302) or re-renders the page with error messages embedded in the HTML.\n- The OTP auto-submit does NOT work without JS. The \"Verify\" button serves as the fallback (which is why it exists despite auto-submit).\n- The session timeout warning does NOT appear without JS. The session expires server-side after 15 minutes regardless. The next request returns 401 and redirects to `/session-expired`.\n- Password visibility toggle does not work without JS. The password field remains `type=\"password\"`.\n- `PasswordPolicyHelper` (real-time validation) does not work without JS. Server-side validation catches all errors and re-renders the form with error messages.\n- `<noscript>` tag included on auth pages: `<noscript><p class=\"text-sm text-muted-foreground text-center mt-4\">For the best experience, please enable JavaScript in your browser.</p></noscript>`\n\n### 8.2 What Happens on Very Slow Connections (>3s response)?\n\n**Login Form Submit (>3s):**\n\n- The \"Signing in...\" spinner continues indefinitely (no client-side timeout).\n- If the request takes >10 seconds, the client side shows a subtle secondary message below the spinner: \"This is taking longer than usual...\" (via a `setTimeout` that sets additional state).\n- If the request fails due to network timeout (browser-defined, typically 30-60s), the catch handler shows a toast: \"Unable to connect. Check your internet connection and try again.\"\n- The button returns to its default \"Continue\" state.\n\n**MFA Auto-Submit (>3s):**\n\n- OTP slots remain locked with the entered digits visible.\n- Spinner continues on the \"Verify\" button.\n- Same timeout messaging as above.\n\n**Page Load (>3s on 3G):**\n\n- Next.js streaming SSR begins sending HTML immediately. The shell (background color, layout) renders before JavaScript hydrates.\n- `loading.tsx` files in the App Router show a centered skeleton card with pulsing placeholder lines.\n- Critical CSS is inlined. Fonts load asynchronously with `font-display: swap` to prevent invisible text.\n\n### 8.3 What Happens with Browser Autofill Conflicts?\n\n**Known Autofill Issues and Mitigations:**\n\n| Issue | Mitigation |\n|---|---|\n| Chrome fills email+password but visually the labels overlap the filled values | Use floating labels that always stay above the input (shadcn/ui default), OR use placeholder text (our approach) that disappears when autofilled. The `Label` is positioned above the `Input`, not as a floating label, so this is a non-issue. |\n| Password managers fill the wrong field (e.g., filling \"Confirm password\" with saved password) | `autoComplete=\"new-password\"` on register form forces password managers to generate/not-autofill. `autoComplete=\"current-password\"` on login form signals correct behavior. |\n| Autofill changes input value but React state is stale (the `onChange` event doesn't fire for autofill) | Use the `input` event (native) or listen for `animationstart` on the `-webkit-autofill` pseudo-class to detect autofill and sync React state. shadcn/ui Input uses `onChange` which is triggered by modern browsers on autofill. As a safety net: form validation runs on submit (not just on change), catching any desync. |\n| Chrome's yellow autofill background clashes with our warm off-white theme | Override via CSS: `input:-webkit-autofill { -webkit-box-shadow: 0 0 0 1000px var(--card) inset; -webkit-text-fill-color: var(--foreground); }` |\n\n### 8.4 What Happens When User Navigates Back After Login?\n\n**Scenario:** User logs in successfully, reaches `/dashboard`, then presses the browser Back button.\n\n**Behavior:**\n\n- The `/login` page is re-rendered.\n- The `LoginPage` component checks auth state on mount via `useAuth()`.\n- If the user is already authenticated (valid tokens in cookies), the page immediately redirects to `/dashboard` (or the configured redirect).\n- The user never sees the login form in an authenticated state.\n- Response header on login page: `Cache-Control: no-store, no-cache, must-revalidate` prevents the browser from showing a cached version of the login form with previously-entered credentials.\n\n**Implementation (middleware):**\n\n```typescript\n// middleware.ts\nif (isAuthPage(pathname) && hasValidSession(request)) {\n  return NextResponse.redirect(new URL('/dashboard', request.url));\n}\n```\n\n### 8.5 What Happens on Page Refresh During MFA Flow?\n\n**Scenario:** User has entered credentials (step 1 of auth), is on `/login/mfa`, and refreshes the page.\n\n**Behavior:**\n\n- The partial authentication state is stored in an HttpOnly cookie (`hg-mfa-session`) set during the initial credential verification. This cookie contains an encrypted reference to the Keycloak authentication session (not the full credentials).\n- On refresh, the MFA page checks for this cookie.\n- If the cookie is present and the Keycloak auth session is still valid (has not expired -- Keycloak auth session timeout is 5 minutes): the MFA page renders normally.\n- If the cookie is missing or the Keycloak auth session has expired: the user is redirected back to `/login` with no error message. They must re-enter credentials.\n- The MFA session cookie has `Max-Age=300` (5 minutes), matching Keycloak's action token timeout.\n\n### 8.6 What Happens with Multiple Tabs Open?\n\n**Scenario 1: User is logged in with multiple tabs open. Session timeout warning appears.**\n\n- Session idle tracking uses `BroadcastChannel` API (with `localStorage` event fallback for Safari < 15.4).\n- When one tab detects the idle threshold and shows the warning, it broadcasts `{ type: 'SESSION_WARNING', secondsRemaining: 120 }`.\n- All other tabs receive this message and show the warning dialog simultaneously.\n- When the user clicks \"Stay in\" on any tab, that tab broadcasts `{ type: 'SESSION_EXTENDED' }`.\n- All tabs dismiss their warning dialogs and reset their idle timers.\n- If the user clicks \"Sign out\" on any tab, it broadcasts `{ type: 'SESSION_EXPIRED' }`.\n- All tabs redirect to `/session-expired`.\n\n**Scenario 2: User logs out in one tab.**\n\n- Logout broadcasts `{ type: 'SESSION_EXPIRED' }` via BroadcastChannel.\n- All other tabs receive the message, clear local state, and redirect to `/login`.\n- Additionally, Keycloak's back-channel logout notifies the BFF endpoint, which invalidates the session cookie server-side.\n\n**Scenario 3: User is on `/login` in two tabs and logs in from one.**\n\n- After successful login in tab A, the session cookies are set.\n- Tab B still shows the login form.\n- When the user interacts with tab B (e.g., tries to submit), the middleware detects the valid session and redirects to `/dashboard`.\n- Alternatively, if tab B is left idle, it remains on the login page (harmless).\n\n**Scenario 4: User starts MFA in one tab and switches to another.**\n\n- The MFA session is tied to a single authentication flow in Keycloak (identified by the `hg-mfa-session` cookie).\n- Both tabs share the same cookie, so completing MFA in either tab completes the flow.\n- If MFA is completed in tab A, tab B's MFA form will fail on submit (the auth session is consumed). The BFF detects this and redirects tab B to `/dashboard` (since the user is now fully authenticated).\n\n---\n\n### Critical Files for Implementation\n\n- `/Users/avn/Desktop/prodACA/docs/phase0-discovery/05-ux-ui-design-spec.md` - Contains all 10 screen wireframes, design tokens (OKLCH color system, typography scale, spacing grid, shadows, transitions), component inventory, interaction states, error message patterns, responsive breakpoints, and accessibility requirements. This is the primary design source that every component tree in this document maps back to.\n\n- `/Users/avn/Desktop/prodACA/docs/phase1-prd/06-prd.md` - Contains FR1-FR25 with detailed acceptance criteria that define exact behavior for every screen (login credentials handling, MFA auto-submit, session timeout thresholds, password policy rules, error message wording, token lifetimes, SDK interface contracts). Every form schema, error state, and Keycloak endpoint mapping in this document traces directly to PRD acceptance criteria.\n\n- `/Users/avn/Desktop/prodACA/docs/phase0-discovery/02-user-personas.md` - Contains the 5 user personas (Dr. Sarah Chen, Maria Rodriguez, James Park, Priya Patel, Dr. Robert Kim) whose specific needs drive UX decisions throughout this document: session warning timing for clinicians, MFA simplicity for patients, SDK API surface for developers, and audit-trail requirements for the CISO.\n\n- `/Users/avn/Desktop/prodACA/docs/phase0-discovery/01-product-brief.md` - Contains the 3-Zone architecture model, KR targets (p95 < 200ms login, 99.95% uptime, < 8 hour integration time), and the tech stack constraints (Keycloak 24+, Next.js 14 App Router, PostgreSQL 16) that bound all implementation decisions in this finalization.\n\n- `/Users/avn/Desktop/prodACA/docs/phase0-discovery/03-competitive-analysis.md` - Contains the Keycloak selection rationale and competitive feature matrix that justify protocol choices (SAML 2.0 as a hard requirement, OIDC Authorization Code + PKCE), MFA method selection (TOTP primary, WebAuthn P2), and the SDK-first developer experience approach that differentiates HealthGate from Epic/Cerner/athena integration patterns."}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"cache_creation_input_tokens":6697,"cache_read_input_tokens":58802,"output_tokens":26561,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":6697,"ephemeral_5m_input_tokens":0},"inference_geo":"","iterations":[],"speed":"standard"}},"requestId":"req_011CYciyQNyNDKepBQRSo2Xr","type":"assistant","uuid":"1dcee202-bdb4-46e3-a857-14d8b6de1d4b","timestamp":"2026-03-01T17:12:21.811Z"}
+# HealthGate -- UX Design Finalization Document
+
+**Document Version:** 1.0
+**Author:** UX Lead, Google Health
+**Date:** 2026-03-01
+**Status:** DRAFT -- Pending Engineering Review
+**Inputs:** 05-ux-ui-design-spec.md (Bare Metal UX Spec), 06-prd.md (PRD v1.0)
+**Classification:** Google Confidential
+
+---
+
+## 1. Component Specifications
+
+For each of the 10 screens, I specify the complete component tree, shadcn/ui configuration, form schema, state management, error handling, loading states, and keyboard behavior.
+
+---
+
+### S1: Login (`/login`)
+
+**Component Tree:**
+
+```
+<LoginPage>
+  <AuthLayout>                              // shared layout for all auth screens
+    <BrandHeader />                         // Logo + \"HealthGate\" wordmark
+    <Card className=\"shadow-card border-0 max-w-sm w-full\">
+      <CardHeader>
+        <CardTitle>Welcome back</CardTitle>  // Cormorant Garamond, text-3xl, font-normal
+        <CardDescription>
+          Sign in to continue to {appName}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Form {...form}>                     // react-hook-form + zod resolver
+          {formError && <FormBanner message={formError} />}
+          <FormField name=\"email\">
+            <FormItem>
+              <FormLabel>Email address</FormLabel>
+              <FormControl>
+                <Input
+                  type=\"email\"
+                  placeholder=\"you@example.com\"
+                  autoComplete=\"email\"
+                  autoFocus
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          </FormField>
+          <FormField name=\"password\">
+            <FormItem>
+              <FormLabel>Password</FormLabel>
+              <FormControl>
+                <PasswordInput                // custom wrapper around Input
+                  autoComplete=\"current-password\"
+                  autoHideAfterMs={10000}     // FR1 AC7: revert to hidden after 10s
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          </FormField>
+          <div className=\"flex justify-end\">
+            <Link href=\"/forgot-password\" className=\"text-sm text-primary hover:underline\">
+              Forgot password?
+            </Link>
+          </div>
+          <Button
+            type=\"submit\"
+            className=\"w-full\"
+            disabled={isSubmitting || isThrottled}
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className=\"mr-2 h-4 w-4 animate-spin\" />
+                Signing in...
+              </>
+            ) : 'Continue'}
+          </Button>
+        </Form>
+        <Separator className=\"my-6\" />
+        <div className=\"relative flex items-center justify-center\">
+          <span className=\"bg-card px-2 text-xs text-muted-foreground\">
+            or continue with
+          </span>
+        </div>
+        <Button variant=\"outline\" className=\"w-full mt-4\" onClick={handleSSO}>
+          <BuildingIcon className=\"mr-2 h-4 w-4\" />
+          SSO / SAML
+        </Button>
+      </CardContent>
+      <CardFooter className=\"flex-col gap-2\">
+        <p className=\"text-sm text-muted-foreground\">
+          Don't have an account?{' '}
+          <Link href=\"/register\" className=\"text-primary hover:underline font-medium\">
+            Sign up
+          </Link>
+        </p>
+      </CardFooter>
+    </Card>
+    <LegalFooter />                          // HIPAA Notice . Privacy . Terms
+  </AuthLayout>
+</LoginPage>
+```
+
+**shadcn/ui Components with Exact Props:**
+
+| Component | Props / Configuration |
+|---|---|
+| `Card` | `className=\"shadow-card border-0 max-w-sm w-full p-8 sm:p-6\"` |
+| `CardTitle` | `className=\"font-heading text-3xl font-normal tracking-[-0.02em] leading-[1.2]\"` |
+| `CardDescription` | `className=\"font-body text-sm text-muted-foreground\"` |
+| `Form` | Uses `useForm<LoginFormValues>()` with `zodResolver(loginSchema)` |
+| `FormField` | `control={form.control}`, `name=\"email\"` / `name=\"password\"` |
+| `Input` (email) | `type=\"email\"`, `autoComplete=\"email\"`, `autoFocus`, `className=\"h-10\"` |
+| `PasswordInput` | Custom component wrapping `Input` with `type` toggle, `autoComplete=\"current-password\"`, eye icon button with `aria-label=\"Show password\"` / `\"Hide password\"` |
+| `Button` (primary) | `type=\"submit\"`, `variant=\"default\"` (terracotta bg), `className=\"w-full h-10\"`, `disabled={isSubmitting \\|\\| isThrottled}` |
+| `Button` (SSO) | `variant=\"outline\"`, `className=\"w-full h-10\"` |
+| `Separator` | default, wrapped in relative div with centered label text |
+| `Link` (forgot pw) | `className=\"text-sm text-primary hover:underline\"` |
+| `Link` (sign up) | `className=\"text-primary hover:underline font-medium\"` |
+
+**Zod Form Schema:**
+
+```typescript
+import { z } from 'zod';
+
+export const loginSchema = z.object({
+  email: z
+    .string()
+    .min(1, 'Email address is required')
+    .email('Enter a valid email address')
+    .transform((v) => v.toLowerCase().trim()),
+  password: z
+    .string()
+    .min(1, 'Password is required'),
+});
+
+export type LoginFormValues = z.infer<typeof loginSchema>;
+```
+
+**State Management:**
+
+| State | Location | Purpose |
+|---|---|---|
+| `form` (react-hook-form) | Local component via `useForm()` | Field values, field-level validation errors, dirty/touched state |
+| `isSubmitting` | Derived from `form.formState.isSubmitting` | Button loading state |
+| `formError` | Local `useState<string \\| null>` | Banner error for server-returned auth failures |
+| `isThrottled` | Local `useState<boolean>` | FR12 AC6: disable button for 2s after failure, 5s after 3 failures |
+| `failureCount` | Local `useRef<number>` | Track consecutive failures in this browser session for progressive throttle |
+| `passwordVisible` | Inside `PasswordInput` (`useState<boolean>`) | Eye toggle state |
+| `autoHideTimer` | Inside `PasswordInput` (`useRef<NodeJS.Timeout>`) | 10-second auto-hide timer |
+
+**Error States:**
+
+| Error Condition | Display Type | Message |
+|---|---|---|
+| Field empty on submit | Inline (below field) | \"Email address is required\" / \"Password is required\" |
+| Invalid email format | Inline (below field) | \"Enter a valid email address\" |
+| Wrong credentials (401 from server) | Banner (above form) | \"Invalid email or password. Please try again.\" |
+| Account locked (Keycloak `USER_TEMPORARILY_DISABLED`) | Redirect | Redirect to `/account-locked` |
+| Server error (5xx) | Toast (Sonner) | \"Something went wrong. Please try again later.\" |
+| Rate limited (429) | Toast (Sonner) | \"Too many requests. Please wait a moment and try again.\" |
+| Network failure | Toast (Sonner) | \"Unable to connect. Check your internet connection and try again.\" |
+
+**Loading States:**
+
+| Trigger | Visual |
+|---|---|
+| Form submission | Button text changes to \"Signing in...\" with `Loader2` spinner icon (h-4 w-4 animate-spin). Button disabled. All inputs disabled via `fieldset[disabled]`. |
+| SSO button click | SSO button shows `Loader2` spinner, text changes to \"Redirecting...\". All form inputs and primary button disabled. |
+
+**Keyboard Shortcuts / Tab Order:**
+
+1. Email input (autoFocus)
+2. Password input
+3. Password visibility toggle (eye icon)
+4. \"Forgot password?\" link
+5. \"Continue\" button
+6. \"SSO / SAML\" button
+7. \"Sign up\" link
+8. Legal footer links
+
+`Enter` key submits the form from any field within the `<form>` element. No custom keyboard shortcuts beyond native HTML form behavior.
+
+---
+
+### S2: Register (`/register`)
+
+**Component Tree:**
+
+```
+<RegisterPage>
+  <AuthLayout>
+    <BrandHeader />
+    <Card className=\"shadow-card border-0 max-w-sm w-full\">
+      <CardHeader>
+        <CardTitle>Create your account</CardTitle>
+        <CardDescription>
+          Sign up to access your health services
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Form {...form}>
+          {formError && <FormBanner message={formError} />}
+          <FormField name=\"fullName\">
+            <FormItem>
+              <FormLabel>Full name</FormLabel>
+              <FormControl>
+                <Input autoComplete=\"name\" autoFocus />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          </FormField>
+          <FormField name=\"email\">
+            <FormItem>
+              <FormLabel>Email address</FormLabel>
+              <FormControl>
+                <Input type=\"email\" autoComplete=\"email\" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          </FormField>
+          <FormField name=\"password\">
+            <FormItem>
+              <FormLabel>Password</FormLabel>
+              <FormControl>
+                <PasswordInput autoComplete=\"new-password\" />
+              </FormControl>
+              <PasswordPolicyHelper password={watchedPassword} />
+              <FormMessage />
+            </FormItem>
+          </FormField>
+          <FormField name=\"confirmPassword\">
+            <FormItem>
+              <FormLabel>Confirm password</FormLabel>
+              <FormControl>
+                <PasswordInput autoComplete=\"new-password\" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          </FormField>
+          <FormField name=\"termsAccepted\">
+            <FormItem className=\"flex items-start gap-2\">
+              <FormControl>
+                <Checkbox />
+              </FormControl>
+              <FormLabel className=\"text-sm font-normal leading-snug\">
+                I agree to the{' '}
+                <Link href=\"/terms\" className=\"text-primary hover:underline\">Terms of Service</Link>
+                {' '}and{' '}
+                <Link href=\"/privacy\" className=\"text-primary hover:underline\">Privacy Policy</Link>
+              </FormLabel>
+              <FormMessage />
+            </FormItem>
+          </FormField>
+          <Button
+            type=\"submit\"
+            className=\"w-full\"
+            disabled={isSubmitting || !form.formState.isValid}
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className=\"mr-2 h-4 w-4 animate-spin\" />
+                Creating account...
+              </>
+            ) : 'Create account'}
+          </Button>
+        </Form>
+      </CardContent>
+      <CardFooter>
+        <p className=\"text-sm text-muted-foreground\">
+          Already have an account?{' '}
+          <Link href=\"/login\" className=\"text-primary hover:underline font-medium\">
+            Sign in
+          </Link>
+        </p>
+      </CardFooter>
+    </Card>
+    <LegalFooter />
+  </AuthLayout>
+</RegisterPage>
+```
+
+**Zod Form Schema:**
+
+```typescript
+export const registerSchema = z
+  .object({
+    fullName: z
+      .string()
+      .min(1, 'Full name is required')
+      .min(2, 'Name must be at least 2 characters')
+      .max(100, 'Name must be under 100 characters'),
+    email: z
+      .string()
+      .min(1, 'Email address is required')
+      .email('Enter a valid email address')
+      .transform((v) => v.toLowerCase().trim()),
+    password: z
+      .string()
+      .min(12, 'Password must be at least 12 characters')
+      .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
+      .regex(/[a-z]/, 'Must contain at least one lowercase letter')
+      .regex(/[0-9]/, 'Must contain at least one number')
+      .regex(
+        /[!@#$%^&*()\\-_=+\\[\\]{};:'\",.<>?/\\\\|~]/,
+        'Must contain at least one special character'
+      ),
+    confirmPassword: z.string().min(1, 'Please confirm your password'),
+    termsAccepted: z.literal(true, {
+      errorMap: () => ({ message: 'You must accept the Terms of Service' }),
+    }),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  });
+
+export type RegisterFormValues = z.infer<typeof registerSchema>;
+```
+
+**`PasswordPolicyHelper` Sub-component:**
+
+This renders below the password field as a checklist of requirements, each turning from `text-muted-foreground` to `text-green-600 dark:text-green-400` with a checkmark icon as the user types:
+
+```
+<PasswordPolicyHelper> renders:
+  [ ] / [x] At least 12 characters
+  [ ] / [x] One uppercase letter
+  [ ] / [x] One lowercase letter
+  [ ] / [x] One number
+  [ ] / [x] One special character
+```
+
+Each line is `text-xs` and toggles `text-muted-foreground` (unmet) vs `text-green-600` (met). Uses `aria-live=\"polite\"` on the container so screen readers announce changes as the user types.
+
+**State Management:**
+
+| State | Location | Purpose |
+|---|---|---|
+| `form` (react-hook-form) | Local `useForm()` with `mode: 'onBlur'` | Field values, validation per FR2 AC5 (validate on blur) |
+| `formError` | Local `useState<string \\| null>` | Server-returned registration errors |
+| `isSubmitting` | Derived from `form.formState.isSubmitting` | Loading state |
+| `watchedPassword` | `form.watch('password')` | Drives real-time `PasswordPolicyHelper` updates |
+
+**Error States:**
+
+| Error Condition | Display Type | Message |
+|---|---|---|
+| Field empty on blur | Inline | \"Full name is required\" / \"Email address is required\" etc. |
+| Password policy violation | Inline + PasswordPolicyHelper | Specific unmet rule highlighted in helper |
+| Passwords don't match | Inline (below confirm password) | \"Passwords do not match\" |
+| Terms not checked | Inline (below checkbox) | \"You must accept the Terms of Service\" |
+| Email already registered (server) | Banner | \"Unable to create account. Please try again or sign in.\" |
+| Server error | Toast | \"Something went wrong. Please try again later.\" |
+
+**Loading States:**
+
+Button changes to \"Creating account...\" with spinner. All inputs disabled. After success, a brief \"Redirecting...\" state before navigation to `/login/mfa-setup`.
+
+**Tab Order:**
+
+1. Full name input (autoFocus)
+2. Email input
+3. Password input
+4. Password visibility toggle
+5. Confirm password input
+6. Confirm password visibility toggle
+7. Terms of Service checkbox
+8. Terms of Service link
+9. Privacy Policy link
+10. \"Create account\" button
+11. \"Sign in\" link
+
+---
+
+### S3: MFA Challenge (`/login/mfa`)
+
+**Component Tree:**
+
+```
+<MFAChallengePage>
+  <AuthLayout>
+    <BrandHeader />
+    <Card className=\"shadow-card border-0 max-w-sm w-full\">
+      <CardHeader>
+        <CardTitle>Two-factor authentication</CardTitle>
+        <CardDescription>
+          Enter the 6-digit code from your authenticator app.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Form {...form}>
+          {formError && <FormBanner message={formError} />}
+          <FormField name=\"code\">
+            <FormItem className=\"flex flex-col items-center\">
+              <FormControl>
+                <InputOTP
+                  maxLength={6}
+                  pattern={REGEXP_ONLY_DIGITS}
+                  autoFocus
+                  onComplete={handleAutoSubmit}
+                >
+                  <InputOTPGroup>
+                    <InputOTPSlot index={0} />
+                    <InputOTPSlot index={1} />
+                    <InputOTPSlot index={2} />
+                  </InputOTPGroup>
+                  <InputOTPSeparator />
+                  <InputOTPGroup>
+                    <InputOTPSlot index={3} />
+                    <InputOTPSlot index={4} />
+                    <InputOTPSlot index={5} />
+                  </InputOTPGroup>
+                </InputOTP>
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          </FormField>
+          <Button
+            type=\"submit\"
+            className=\"w-full\"
+            disabled={isSubmitting || code.length < 6}
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className=\"mr-2 h-4 w-4 animate-spin\" />
+                Verifying...
+              </>
+            ) : 'Verify'}
+          </Button>
+        </Form>
+      </CardContent>
+      <CardFooter className=\"flex-col gap-3\">
+        <Link
+          href=\"/login/mfa-recovery\"
+          className=\"text-sm text-muted-foreground hover:text-primary\"
+        >
+          Can't access your code? Use a recovery code
+        </Link>
+        <Link
+          href=\"/login\"
+          className=\"text-sm text-muted-foreground hover:text-primary flex items-center gap-1\"
+        >
+          <ArrowLeft className=\"h-3 w-3\" /> Back to sign in
+        </Link>
+      </CardFooter>
+    </Card>
+  </AuthLayout>
+</MFAChallengePage>
+```
+
+**shadcn/ui InputOTP Configuration:**
+
+| Prop | Value | Purpose |
+|---|---|---|
+| `maxLength` | `6` | 6-digit TOTP |
+| `pattern` | `REGEXP_ONLY_DIGITS` (from `input-otp`) | Restricts to numeric input |
+| `autoFocus` | `true` | First slot receives focus on mount |
+| `onComplete` | `handleAutoSubmit` callback | FR5 AC3: auto-submit when 6th digit entered |
+| Each `InputOTPSlot` | `className=\"h-12 w-12 text-lg\"` | 48x48px slots, exceeding 44px touch target |
+
+**Zod Form Schema:**
+
+```typescript
+export const mfaChallengeSchema = z.object({
+  code: z
+    .string()
+    .length(6, 'Enter all 6 digits')
+    .regex(/^\\d{6}$/, 'Code must be 6 digits'),
+});
+
+export type MFAChallengeFormValues = z.infer<typeof mfaChallengeSchema>;
+```
+
+**State Management:**
+
+| State | Location | Purpose |
+|---|---|---|
+| `form` | Local `useForm()` | OTP value |
+| `formError` | Local `useState<string \\| null>` | \"Unable to verify. Please try again.\" |
+| `isSubmitting` | Derived from form state | Loading |
+| `attemptCount` | Local `useRef<number>` | Track failures; at 5 redirect to `/account-locked` |
+
+**Auto-Submit Behavior:**
+
+```typescript
+const handleAutoSubmit = useCallback(async (value: string) => {
+  if (value.length === 6) {
+    form.setValue('code', value);
+    await form.handleSubmit(onSubmit)();
+  }
+}, [form, onSubmit]);
+```
+
+On failure, the `InputOTP` value is cleared programmatically via `form.reset({ code: '' })`, and focus returns to the first slot. This is accomplished by holding a ref to the `InputOTP` component and calling `.focus()` on the first slot after reset.
+
+**Error States:**
+
+| Error Condition | Display Type | Message |
+|---|---|---|
+| Wrong code | Banner + OTP clear | \"Unable to verify. Please try again.\" |
+| 5th consecutive failure | Redirect | Redirect to `/account-locked` |
+| Server error | Toast | \"Something went wrong. Please try again later.\" |
+
+**Loading States:**
+
+Button shows \"Verifying...\" with spinner. OTP inputs become disabled. On auto-submit, the visual feedback is immediate: all 6 slots lock (slight opacity reduction) and the spinner appears.
+
+**Tab Order:**
+
+1. OTP slot 1 (autoFocus; slots auto-advance, not separate tab stops)
+2. \"Verify\" button
+3. \"Use a recovery code\" link
+4. \"Back to sign in\" link
+
+---
+
+### S4: MFA Setup (`/login/mfa-setup`)
+
+**Component Tree (two phases -- Setup and Recovery Codes):**
+
+**Phase 1: QR Code + Verification**
+
+```
+<MFASetupPage>
+  <AuthLayout>
+    <BrandHeader />
+    <Card className=\"shadow-card border-0 max-w-[28rem] w-full\">
+      <CardHeader>
+        <CardTitle>Set up two-factor authentication</CardTitle>
+        <CardDescription>
+          Scan this QR code with your authenticator app
+          (Google Authenticator, Authy, or similar).
+        </CardDescription>
+      </CardHeader>
+      <CardContent className=\"flex flex-col items-center gap-6\">
+        <div className=\"rounded-lg border p-4 bg-white\">
+          <QRCodeImage
+            src={qrCodeDataUrl}
+            alt=\"TOTP QR code for authenticator app\"
+            width={200}
+            height={200}
+          />
+        </div>
+        <ManualKeyToggle>
+          <p className=\"text-sm text-muted-foreground\">
+            Can't scan? Enter this code manually:
+          </p>
+          <code className=\"font-mono text-sm tracking-wider select-all bg-muted px-3 py-2 rounded-md\">
+            {formattedSecret}   {/* e.g. \"JBSW Y3DP EHPK 3PXP\" */}
+          </code>
+          <Button
+            variant=\"ghost\"
+            size=\"sm\"
+            onClick={copySecretToClipboard}
+          >
+            <Copy className=\"h-3.5 w-3.5 mr-1\" /> Copy
+          </Button>
+        </ManualKeyToggle>
+        <div className=\"w-full\">
+          <p className=\"text-sm text-muted-foreground mb-3\">
+            Enter the 6-digit code to verify setup:
+          </p>
+          <Form {...form}>
+            <FormField name=\"code\">
+              <FormItem className=\"flex flex-col items-center\">
+                <FormControl>
+                  <InputOTP maxLength={6} pattern={REGEXP_ONLY_DIGITS} onComplete={handleAutoSubmit}>
+                    <InputOTPGroup>
+                      <InputOTPSlot index={0} />
+                      <InputOTPSlot index={1} />
+                      <InputOTPSlot index={2} />
+                    </InputOTPGroup>
+                    <InputOTPSeparator />
+                    <InputOTPGroup>
+                      <InputOTPSlot index={3} />
+                      <InputOTPSlot index={4} />
+                      <InputOTPSlot index={5} />
+                    </InputOTPGroup>
+                  </InputOTP>
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            </FormField>
+            <Button type=\"submit\" className=\"w-full mt-4\" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <><Loader2 className=\"mr-2 h-4 w-4 animate-spin\" /> Verifying...</>
+              ) : 'Verify and enable'}
+            </Button>
+          </Form>
+        </div>
+      </CardContent>
+    </Card>
+  </AuthLayout>
+</MFASetupPage>
+```
+
+**Phase 2: Recovery Codes (shown after successful verification)**
+
+```
+<RecoveryCodesView>
+  <Card className=\"shadow-card border-0 max-w-[28rem] w-full\">
+    <CardHeader>
+      <CardTitle>Save your recovery codes</CardTitle>
+      <CardDescription>
+        If you lose access to your authenticator app, you can use
+        these codes to sign in. Each code can only be used once.
+      </CardDescription>
+    </CardHeader>
+    <CardContent>
+      <div className=\"rounded-md border bg-muted/50 p-4 font-mono text-sm space-y-1\">
+        {recoveryCodes.map((code) => (
+          <div key={code}>{code}</div>  // e.g. \"a1b2c-3d4e5\"
+        ))}
+      </div>
+      <div className=\"flex gap-3 mt-4\">
+        <Button variant=\"outline\" size=\"sm\" onClick={copyAllCodes}>
+          <Copy className=\"h-3.5 w-3.5 mr-1\" /> Copy
+        </Button>
+        <Button variant=\"outline\" size=\"sm\" onClick={downloadCodes}>
+          <Download className=\"h-3.5 w-3.5 mr-1\" /> Download
+        </Button>
+      </div>
+      <FormField name=\"savedConfirmation\">
+        <FormItem className=\"flex items-start gap-2 mt-6\">
+          <FormControl>
+            <Checkbox />
+          </FormControl>
+          <FormLabel className=\"text-sm font-normal\">
+            I've saved these codes
+          </FormLabel>
+        </FormItem>
+      </FormField>
+      <Button
+        className=\"w-full mt-4\"
+        disabled={!savedConfirmed}
+        onClick={handleContinue}
+      >
+        Continue
+      </Button>
+    </CardContent>
+  </Card>
+</RecoveryCodesView>
+```
+
+**State Management:**
+
+| State | Location | Purpose |
+|---|---|---|
+| `phase` | Local `useState<'setup' \\| 'recovery'>` | Controls which view is shown |
+| `qrCodeDataUrl` | Server data (fetched on mount) | Base64-encoded QR image from Keycloak TOTP setup API |
+| `totpSecret` | Server data | Base32 secret string for manual entry |
+| `recoveryCodes` | Server response (after verification) | Array of 5 recovery code strings |
+| `savedConfirmed` | Local `useState<boolean>` | Checkbox state; gates \"Continue\" button |
+| `manualKeyVisible` | Local `useState<boolean>` | Toggle for \"Can't scan?\" collapsible |
+
+**Tab Order (Phase 1):**
+
+1. QR code area (not interactive, skipped)
+2. \"Can't scan?\" toggle button
+3. Manual key copy button (when expanded)
+4. OTP slot 1 (auto-advance through 6)
+5. \"Verify and enable\" button
+
+**Tab Order (Phase 2):**
+
+1. \"Copy\" button
+2. \"Download\" button
+3. \"I've saved these codes\" checkbox
+4. \"Continue\" button
+
+---
+
+### S5: Forgot Password (`/forgot-password`)
+
+**Component Tree:**
+
+```
+<ForgotPasswordPage>
+  <AuthLayout>
+    <BrandHeader />
+    <Card className=\"shadow-card border-0 max-w-sm w-full\">
+      <CardHeader>
+        <CardTitle>Reset your password</CardTitle>
+        <CardDescription>
+          Enter the email address associated with your account
+          and we'll send you a link to reset your password.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {!isSubmitted ? (
+          <Form {...form}>
+            <FormField name=\"email\">
+              <FormItem>
+                <FormLabel>Email address</FormLabel>
+                <FormControl>
+                  <Input type=\"email\" autoComplete=\"email\" autoFocus />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            </FormField>
+            <Button type=\"submit\" className=\"w-full\" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <><Loader2 className=\"mr-2 h-4 w-4 animate-spin\" /> Sending...</>
+              ) : 'Send reset link'}
+            </Button>
+          </Form>
+        ) : (
+          <ConfirmationMessage>
+            <CheckCircle className=\"h-8 w-8 text-primary mx-auto mb-3\" />
+            <p className=\"text-sm text-center text-muted-foreground\">
+              If an account exists with that email, you'll receive
+              a password reset link shortly.
+            </p>
+            <p className=\"text-xs text-center text-muted-foreground mt-2\">
+              Check your spam folder if you don't see it.
+            </p>
+          </ConfirmationMessage>
+        )}
+      </CardContent>
+      <CardFooter>
+        <Link href=\"/login\" className=\"text-sm text-muted-foreground hover:text-primary flex items-center gap-1\">
+          <ArrowLeft className=\"h-3 w-3\" /> Back to sign in
+        </Link>
+      </CardFooter>
+    </Card>
+  </AuthLayout>
+</ForgotPasswordPage>
+```
+
+**Zod Schema:**
+
+```typescript
+export const forgotPasswordSchema = z.object({
+  email: z
+    .string()
+    .min(1, 'Email address is required')
+    .email('Enter a valid email address')
+    .transform((v) => v.toLowerCase().trim()),
+});
+```
+
+**State Management:**
+
+| State | Location | Purpose |
+|---|---|---|
+| `form` | Local `useForm()` | Email field value |
+| `isSubmitted` | Local `useState<boolean>` | Toggles between form view and confirmation view |
+| `isSubmitting` | Derived from form | Loading state |
+
+**Critical UX Decision:** The confirmation message is ALWAYS shown after submission, regardless of whether the email exists. Per FR10 AC2 and FR20, this prevents email enumeration. No error banner is ever shown for \"email not found.\"
+
+**Error States:**
+
+| Error Condition | Display Type | Message |
+|---|---|---|
+| Empty email | Inline | \"Email address is required\" |
+| Invalid email format | Inline | \"Enter a valid email address\" |
+| Server error (5xx) | Toast | \"Something went wrong. Please try again later.\" |
+| Rate limited (silent) | No error shown | Silently dropped per FR10 AC8 |
+
+---
+
+### S6: Reset Password (`/reset-password?token={token}`)
+
+**Component Tree:**
+
+```
+<ResetPasswordPage>
+  <AuthLayout>
+    <BrandHeader />
+    <Card className=\"shadow-card border-0 max-w-sm w-full\">
+      {tokenValid ? (
+        <>
+          <CardHeader>
+            <CardTitle>Create a new password</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Form {...form}>
+              {formError && <FormBanner message={formError} />}
+              <FormField name=\"password\">
+                <FormItem>
+                  <FormLabel>New password</FormLabel>
+                  <FormControl>
+                    <PasswordInput autoComplete=\"new-password\" autoFocus />
+                  </FormControl>
+                  <PasswordPolicyHelper password={watchedPassword} />
+                  <FormMessage />
+                </FormItem>
+              </FormField>
+              <FormField name=\"confirmPassword\">
+                <FormItem>
+                  <FormLabel>Confirm new password</FormLabel>
+                  <FormControl>
+                    <PasswordInput autoComplete=\"new-password\" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              </FormField>
+              <Button type=\"submit\" className=\"w-full\" disabled={isSubmitting}>
+                {isSubmitting ? (
+                  <><Loader2 className=\"mr-2 h-4 w-4 animate-spin\" /> Resetting...</>
+                ) : 'Reset password'}
+              </Button>
+            </Form>
+          </CardContent>
+        </>
+      ) : (
+        <>
+          <CardHeader>
+            <CardTitle>Link expired</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className=\"text-sm text-muted-foreground\">
+              This reset link has expired or has already been used.
+              Please request a new one.
+            </p>
+            <Button asChild variant=\"outline\" className=\"w-full mt-4\">
+              <Link href=\"/forgot-password\">Request new link</Link>
+            </Button>
+          </CardContent>
+        </>
+      )}
+    </Card>
+  </AuthLayout>
+</ResetPasswordPage>
+```
+
+**Zod Schema:**
+
+```typescript
+export const resetPasswordSchema = z
+  .object({
+    password: z
+      .string()
+      .min(12, 'Password must be at least 12 characters')
+      .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
+      .regex(/[a-z]/, 'Must contain at least one lowercase letter')
+      .regex(/[0-9]/, 'Must contain at least one number')
+      .regex(
+        /[!@#$%^&*()\\-_=+\\[\\]{};:'\",.<>?/\\\\|~]/,
+        'Must contain at least one special character'
+      ),
+    confirmPassword: z.string().min(1, 'Please confirm your password'),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  });
+```
+
+**State Management:**
+
+| State | Location | Purpose |
+|---|---|---|
+| `tokenValid` | Server-side validated (passed as prop or fetched on mount) | Determines which view to show |
+| `form` | Local `useForm()` | Password fields |
+| `formError` | Local `useState<string \\| null>` | Server-side password policy violations (breach list, personal data check) |
+
+**Post-Success:** Redirect to `/login` with a Sonner toast: \"Password updated. Please sign in with your new password.\"
+
+---
+
+### S7: Session Timeout Warning (Modal Overlay)
+
+**Component Tree:**
+
+```
+<SessionTimeoutWarning>
+  <AlertDialog open={isVisible} onOpenChange={() => {}}>  {/* not dismissable */}
+    <AlertDialogContent
+      className=\"max-w-sm\"
+      onEscapeKeyDown={(e) => e.preventDefault()}      {/* block Escape */}
+      onPointerDownOutside={(e) => e.preventDefault()}  {/* block outside click */}
+    >
+      <AlertDialogHeader>
+        <AlertDialogTitle>Session expiring</AlertDialogTitle>
+        <AlertDialogDescription>
+          You'll be automatically signed out in{' '}
+          <span className=\"font-semibold tabular-nums\" aria-live=\"assertive\" role=\"timer\">
+            {formatTime(secondsRemaining)}
+          </span>
+          {' '}due to inactivity.
+        </AlertDialogDescription>
+      </AlertDialogHeader>
+      <AlertDialogFooter>
+        <AlertDialogCancel onClick={handleSignOut}>
+          Sign out
+        </AlertDialogCancel>
+        <AlertDialogAction onClick={handleStayIn} autoFocus>
+          Stay in
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  </AlertDialog>
+</SessionTimeoutWarning>
+```
+
+**Critical AlertDialog Props:**
+
+- `open={isVisible}` -- controlled by session timer logic
+- `onOpenChange` is a no-op function -- prevents the dialog from being closed by any built-in mechanism
+- `onEscapeKeyDown` calls `preventDefault()` -- blocks Escape key dismissal (FR7 AC5)
+- `onPointerDownOutside` calls `preventDefault()` -- blocks click-outside dismissal (FR7 AC5)
+- `AlertDialogAction` (\"Stay in\") has `autoFocus` -- focused by default per accessibility best practice (primary safe action)
+
+**State Management:**
+
+| State | Location | Purpose |
+|---|---|---|
+| `isVisible` | `SessionProvider` context (or `useSession()` hook) | Controlled by idle timer reaching 2-minute threshold |
+| `secondsRemaining` | Local `useState<number>`, decremented via `setInterval(1000)` | Live countdown |
+| `idleTimerRef` | `useRef` inside `SessionProvider` | Tracks last activity timestamp |
+
+**Timer Logic (inside `SessionProvider`):**
+
+```typescript
+// Simplified logic outline
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000;       // 15 minutes
+const WARNING_LEAD_MS = 2 * 60 * 1000;        // 2 minutes before
+const TIMER_OFFSET_MS = 5 * 1000;             // 5s ahead of server (EC5)
+
+// Activity listener resets lastActivity on mouse, keyboard, touch, scroll
+// Check every second:
+// - If (now - lastActivity) >= (IDLE_TIMEOUT_MS - WARNING_LEAD_MS - TIMER_OFFSET_MS):
+//     show warning, start countdown
+// - If countdown reaches 0: auto-logout
+
+// Multi-tab sync via BroadcastChannel:
+const channel = new BroadcastChannel('healthgate-session');
+channel.onmessage = (event) => {
+  if (event.data.type === 'SESSION_EXTENDED') resetIdleTimer();
+  if (event.data.type === 'SESSION_EXPIRED') performLogout();
+};
+```
+
+**Error States:**
+
+| Error Condition | Display Type | Message |
+|---|---|---|
+| \"Stay in\" fails (server session already expired) | Redirect | Redirect to `/session-expired` |
+| Network error on \"Stay in\" | Toast + retry | Toast: \"Unable to extend session. Retrying...\" Auto-retry once. On second failure: redirect to `/session-expired` |
+
+---
+
+### S8: Session Expired (`/session-expired`)
+
+**Component Tree:**
+
+```
+<SessionExpiredPage>
+  <AuthLayout>
+    <BrandHeader />
+    <Card className=\"shadow-card border-0 max-w-sm w-full\">
+      <CardHeader className=\"items-center\">
+        <Clock className=\"h-10 w-10 text-muted-foreground mb-2\" />
+        <CardTitle>Your session has ended</CardTitle>
+        <CardDescription className=\"text-center\">
+          {reason === 'idle'
+            ? 'For your security, you were automatically signed out due to inactivity.'
+            : 'Please sign in again.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button asChild className=\"w-full\">
+          <Link href={`/login${redirectUri ? `?redirect=${encodeURIComponent(redirectUri)}` : ''}`}>
+            Sign in again
+          </Link>
+        </Button>
+      </CardContent>
+    </Card>
+  </AuthLayout>
+</SessionExpiredPage>
+```
+
+**State Management:**
+
+Minimal. `reason` and `redirectUri` are derived from URL search params set during the logout redirect. No form state.
+
+---
+
+### S9: Dashboard (`/dashboard`) -- Protected
+
+**Component Tree:**
+
+```
+<ProtectedRoute>
+  <DashboardLayout>
+    <header className=\"flex items-center justify-between p-4 border-b\">
+      <BrandHeader variant=\"compact\" />
+      <UserMenu />                          // Dropdown: name, email, role, \"Sign out\"
+    </header>
+    <main className=\"p-8\">
+      <h1 className=\"font-heading text-2xl\">Dashboard</h1>
+      <p className=\"text-muted-foreground mt-2\">
+        You're signed in as {user.name}.
+      </p>
+      {/* Placeholder content for V1 */}
+    </main>
+    <SessionTimeoutWarning />               // Always mounted when authenticated
+    <Toaster />                             // Sonner toast container
+  </DashboardLayout>
+</ProtectedRoute>
+```
+
+**`UserMenu` Sub-component:**
+
+```
+<DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button variant=\"ghost\" className=\"flex items-center gap-2\">
+      <Avatar className=\"h-8 w-8\">
+        <AvatarFallback>{initials}</AvatarFallback>
+      </Avatar>
+      <span className=\"text-sm hidden sm:inline\">{user.name}</span>
+      <ChevronDown className=\"h-4 w-4\" />
+    </Button>
+  </DropdownMenuTrigger>
+  <DropdownMenuContent align=\"end\">
+    <DropdownMenuLabel>
+      <div>{user.name}</div>
+      <div className=\"text-xs text-muted-foreground\">{user.email}</div>
+    </DropdownMenuLabel>
+    <DropdownMenuSeparator />
+    <DropdownMenuItem onClick={handleSignOut}>
+      <LogOut className=\"mr-2 h-4 w-4\" /> Sign out
+    </DropdownMenuItem>
+  </DropdownMenuContent>
+</DropdownMenu>
+```
+
+---
+
+### S10: Account Locked (`/account-locked`)
+
+**Component Tree:**
+
+```
+<AccountLockedPage>
+  <AuthLayout>
+    <BrandHeader />
+    <Card className=\"shadow-card border-0 max-w-sm w-full\">
+      <CardHeader className=\"items-center\">
+        <ShieldAlert className=\"h-10 w-10 text-destructive mb-2\" />
+        <CardTitle>Account temporarily locked</CardTitle>
+        <CardDescription className=\"text-center\">
+          For your security, this account has been locked after
+          multiple failed sign-in attempts.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className=\"space-y-4\">
+        <p className=\"text-sm text-muted-foreground text-center\">
+          Try again in 15 minutes, or reset your password.
+        </p>
+        <Button asChild className=\"w-full\">
+          <Link href=\"/forgot-password\">Reset password</Link>
+        </Button>
+      </CardContent>
+      <CardFooter>
+        <Link href=\"/login\" className=\"text-sm text-muted-foreground hover:text-primary flex items-center gap-1\">
+          <ArrowLeft className=\"h-3 w-3\" /> Back to sign in
+        </Link>
+      </CardFooter>
+    </Card>
+  </AuthLayout>
+</AccountLockedPage>
+```
+
+**Note:** Per FR12 AC3, the message intentionally does NOT say \"after 5 failed attempts\" to avoid confirming the exact threshold to attackers.
+
+---
+
+## 2. Keycloak <-> UI Flow Mapping
+
+### 2a. Login Flow (OIDC Authorization Code + PKCE)
+
+**Step-by-step sequence:**
+
+```
+User Browser                  Next.js BFF                     Keycloak
+    |                              |                              |
+    |  1. GET /login               |                              |
+    |  <--- render login form -----|                              |
+    |                              |                              |
+    |  2. POST /api/auth/login     |                              |
+    |     { email, password }      |                              |
+    |  --------------------------->|                              |
+    |                              |  3. Generate PKCE:           |
+    |                              |     code_verifier (random)   |
+    |                              |     code_challenge =         |
+    |                              |       SHA256(code_verifier)  |
+    |                              |                              |
+    |                              |  4. Store code_verifier in   |
+    |                              |     HttpOnly cookie (5min)   |
+    |                              |                              |
+    |                              |  5. POST /realms/{realm}/    |
+    |                              |     protocol/openid-connect/ |
+    |                              |     auth                     |
+    |                              |     ?response_type=code      |
+    |                              |     &client_id={client}      |
+    |                              |     &redirect_uri={callback} |
+    |                              |     &scope=openid profile    |
+    |                              |     &state={csrf_state}      |
+    |                              |     &code_challenge={hash}   |
+    |                              |     &code_challenge_method=  |
+    |                              |       S256                   |
+    |                              |  --------------------------->|
+    |                              |                              |
+    |                              |     (Keycloak validates      |
+    |                              |      credentials internally) |
+    |                              |                              |
+    |                              |  6a. If MFA required:        |
+    |                              |  <-- 302 to Keycloak MFA ----|
+    |  <-- redirect to /login/mfa -|  (or Next.js detects         |
+    |                              |   required_action in         |
+    |                              |   response and renders MFA)  |
+    |                              |                              |
+    |                              |  6b. If no MFA / MFA passed: |
+    |                              |  <-- 302 + auth code --------|
+    |                              |                              |
+    |                              |  7. POST /realms/{realm}/    |
+    |                              |     protocol/openid-connect/ |
+    |                              |     token                    |
+    |                              |     grant_type=              |
+    |                              |       authorization_code     |
+    |                              |     code={auth_code}         |
+    |                              |     code_verifier=           |
+    |                              |       {from_cookie}          |
+    |                              |     redirect_uri={callback}  |
+    |                              |     client_id={client}       |
+    |                              |     client_secret={secret}   |
+    |                              |  --------------------------->|
+    |                              |                              |
+    |                              |  <-- { access_token,       --|
+    |                              |        refresh_token,        |
+    |                              |        id_token }            |
+    |                              |                              |
+    |                              |  8. Set encrypted HttpOnly   |
+    |                              |     cookies:                 |
+    |                              |     hg-access (5min MaxAge)  |
+    |                              |     hg-refresh (8h/30m)      |
+    |                              |     hg-id (session)          |
+    |                              |     Clear PKCE cookie        |
+    |                              |                              |
+    |  9. 302 to /dashboard        |                              |
+    |  <--- (or redirect_uri) -----|                              |
+    |                              |                              |
+```
+
+**Exact Keycloak Endpoints:**
+
+| Step | Endpoint | Method | Purpose |
+|---|---|---|---|
+| 5 | `{keycloakUrl}/realms/{realm}/protocol/openid-connect/auth` | GET (redirect) | Initiate OIDC auth |
+| 7 | `{keycloakUrl}/realms/{realm}/protocol/openid-connect/token` | POST | Exchange code for tokens |
+| (discovery) | `{keycloakUrl}/realms/{realm}/.well-known/openid-configuration` | GET | Discover all endpoint URLs |
+
+**Token Exchange Request Payload (Step 7):**
+
+```
+POST /realms/healthgate-clinician/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code
+&code=abc123...
+&redirect_uri=https://auth.googlehealth.com/api/auth/callback
+&client_id=healthgate-web
+&client_secret=xxxx
+&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+```
+
+**Token Exchange Response (Step 7):**
+
+```json
+{
+  \"access_token\": \"eyJhbG...\",
+  \"refresh_token\": \"eyJhbG...\",
+  \"id_token\": \"eyJhbG...\",
+  \"token_type\": \"Bearer\",
+  \"expires_in\": 300,
+  \"refresh_expires_in\": 28800,
+  \"session_state\": \"uuid-of-keycloak-session\",
+  \"scope\": \"openid profile email\"
+}
+```
+
+**What the User Sees at Each Step:**
+
+| Step | User Experience |
+|---|---|
+| 1 | Login form renders (< 500ms p50) |
+| 2 | Clicks \"Continue\" -- button shows \"Signing in...\" spinner |
+| 3-5 | No visible change; all server-side |
+| 6a | If MFA: redirected to MFA challenge screen (new page load, < 300ms) |
+| 6b | If no MFA: brief spinner continues |
+| 7-8 | No visible change; token exchange is back-channel |
+| 9 | Redirected to dashboard; spinner resolves |
+
+**Key Architectural Decision:** We use the \"BFF pattern\" (Backend for Frontend). The browser NEVER receives raw tokens. The Next.js API route (running server-side) performs the token exchange and sets encrypted HttpOnly cookies. This means the OIDC flow is NOT a pure client-side SPA redirect -- it is a server-mediated flow where `POST /api/auth/login` initiates the process and `GET /api/auth/callback` receives the authorization code.
+
+---
+
+### 2b. Registration Flow
+
+**Step-by-step sequence:**
+
+```
+User Browser                  Next.js BFF                     Keycloak Admin API
+    |                              |                              |
+    |  1. GET /register            |                              |
+    |  <--- render register form --|                              |
+    |                              |                              |
+    |  2. POST /api/auth/register  |                              |
+    |     { fullName, email,       |                              |
+    |       password }             |                              |
+    |  --------------------------->|                              |
+    |                              |  3. POST /admin/realms/      |
+    |                              |     {realm}/users             |
+    |                              |     Authorization: Bearer     |
+    |                              |       {service_account_token} |
+    |                              |                              |
+    |                              |     {                        |
+    |                              |       \"firstName\": \"Maria\",  |
+    |                              |       \"lastName\": \"Rodriguez\"|
+    |                              |       \"email\": \"maria@...\",  |
+    |                              |       \"enabled\": true,       |
+    |                              |       \"emailVerified\": true, |
+    |                              |       \"credentials\": [{      |
+    |                              |         \"type\": \"password\",  |
+    |                              |         \"value\": \"...\",      |
+    |                              |         \"temporary\": false   |
+    |                              |       }],                    |
+    |                              |       \"requiredActions\": [   |
+    |                              |         \"CONFIGURE_TOTP\"     |
+    |                              |       ]                      |
+    |                              |     }                        |
+    |                              |  --------------------------->|
+    |                              |                              |
+    |                              |  <-- 201 Created             |
+    |                              |     Location: /users/{uuid}  |
+    |                              |                              |
+    |                              |  4. Initiate OIDC login flow |
+    |                              |     (same as login step 5-8) |
+    |                              |     with the new user creds  |
+    |                              |  --------------------------->|
+    |                              |                              |
+    |                              |  <-- Keycloak returns token  |
+    |                              |     but with required_action |
+    |                              |     CONFIGURE_TOTP           |
+    |                              |                              |
+    |  5. 302 to /login/mfa-setup  |                              |
+    |  <--- redirect --------------|                              |
+    |                              |                              |
+```
+
+**Exact Keycloak Endpoints:**
+
+| Step | Endpoint | Method |
+|---|---|---|
+| 3 | `{keycloakUrl}/admin/realms/{realm}/users` | POST |
+| 4 | Standard OIDC flow (see Login Flow steps 5-8) | GET/POST |
+
+**Request Payload (Step 3):**
+
+```json
+{
+  \"firstName\": \"Maria\",
+  \"lastName\": \"Rodriguez\",
+  \"email\": \"maria@example.com\",
+  \"username\": \"maria@example.com\",
+  \"enabled\": true,
+  \"emailVerified\": false,
+  \"credentials\": [
+    {
+      \"type\": \"password\",
+      \"value\": \"SecurePass123!\",
+      \"temporary\": false
+    }
+  ],
+  \"requiredActions\": [\"CONFIGURE_TOTP\"]
+}
+```
+
+**Error Response (409 Conflict -- email exists):**
+
+```json
+{
+  \"errorMessage\": \"User exists with same username\"
+}
+```
+
+The BFF intercepts this and returns a generic message to the browser: \"Unable to create account. Please try again or sign in.\"
+
+**What the User Sees:**
+
+| Step | User Experience |
+|---|---|
+| 1 | Registration form renders |
+| 2 | Clicks \"Create account\" -- button shows \"Creating account...\" spinner |
+| 3-4 | Server-side; no visible change |
+| 5 | Redirected to MFA setup screen with QR code |
+
+---
+
+### 2c. MFA Challenge Flow
+
+**Step-by-step sequence:**
+
+There are two implementation approaches for MFA with Keycloak. Since we are using the BFF pattern and want full control over the UI, we use Keycloak's **Authentication SPI with a custom REST endpoint** rather than Keycloak's hosted login pages.
+
+```
+User Browser                  Next.js BFF                     Keycloak
+    |                              |                              |
+    |  (After login step 6a:       |                              |
+    |   BFF detected               |                              |
+    |   required_action or         |                              |
+    |   OTP_CREDENTIAL needed)     |                              |
+    |                              |                              |
+    |  1. GET /login/mfa           |                              |
+    |  <--- render MFA form -------|                              |
+    |     (session token stored    |                              |
+    |      in HttpOnly cookie      |                              |
+    |      hg-mfa-session)         |                              |
+    |                              |                              |
+    |  2. POST /api/auth/mfa       |                              |
+    |     { code: \"123456\" }       |                              |
+    |  --------------------------->|                              |
+    |                              |  3. POST /realms/{realm}/    |
+    |                              |     protocol/openid-connect/ |
+    |                              |     token                    |
+    |                              |     grant_type=password      |
+    |                              |     (with OTP credential)    |
+    |                              |                              |
+    |                              |     OR via Keycloak's        |
+    |                              |     Authentication Flow API: |
+    |                              |     POST /realms/{realm}/    |
+    |                              |     login-actions/           |
+    |                              |     authenticate             |
+    |                              |     ?session_code={code}     |
+    |                              |     &execution={otp_exec_id} |
+    |                              |     &client_id={client}      |
+    |                              |                              |
+    |                              |     Body: { otp: \"123456\" }  |
+    |                              |  --------------------------->|
+    |                              |                              |
+    |                              |  4a. Valid code:             |
+    |                              |  <-- tokens issued ----------|
+    |                              |                              |
+    |                              |  4b. Invalid code:           |
+    |                              |  <-- 401 invalid_otp --------|
+    |                              |                              |
+    |  5a. 302 to /dashboard       |                              |
+    |  <--- (set token cookies) ---|                              |
+    |                              |                              |
+    |  5b. Re-render with error    |                              |
+    |  <--- \"Unable to verify...\" -|                              |
+    |                              |                              |
+```
+
+**What the User Sees:**
+
+| Step | User Experience |
+|---|---|
+| 1 | MFA challenge form with 6 OTP input boxes |
+| 2 | User enters digits; on 6th digit, form auto-submits. Boxes lock, spinner appears |
+| 4a | Brief \"Verifying...\" then redirect to dashboard |
+| 4b | Error banner \"Unable to verify. Please try again.\" OTP cleared, focus returns to first digit |
+
+---
+
+### 2d. Password Reset Flow
+
+**Step-by-step sequence:**
+
+```
+User Browser                  Next.js BFF                     Keycloak
+    |                              |                              |
+    |  1. GET /forgot-password     |                              |
+    |  <--- render form ---------- |                              |
+    |                              |                              |
+    |  2. POST /api/auth/          |                              |
+    |     forgot-password          |                              |
+    |     { email }                |                              |
+    |  --------------------------->|                              |
+    |                              |  3. PUT /admin/realms/       |
+    |                              |     {realm}/users/{id}/      |
+    |                              |     execute-actions-email    |
+    |                              |                              |
+    |                              |     Body: [\"UPDATE_PASSWORD\"]|
+    |                              |     Query: ?lifespan=900     |
+    |                              |       (15 min in seconds)    |
+    |                              |                              |
+    |                              |     Note: BFF first looks up |
+    |                              |     user by email via:       |
+    |                              |     GET /admin/realms/       |
+    |                              |     {realm}/users            |
+    |                              |     ?email={email}&exact=true|
+    |                              |                              |
+    |                              |     If user not found: BFF   |
+    |                              |     returns success anyway   |
+    |                              |     (prevent enumeration)    |
+    |                              |  --------------------------->|
+    |                              |                              |
+    |                              |  <-- 204 No Content ---------|
+    |                              |     (Keycloak sends email)   |
+    |                              |                              |
+    |  4. Show confirmation        |                              |
+    |  <--- \"If an account...\" ----|                              |
+    |                              |                              |
+    |  === USER CHECKS EMAIL ===   |                              |
+    |                              |                              |
+    |  5. Clicks link in email:    |                              |
+    |     https://auth.google      |                              |
+    |     health.com/reset-        |                              |
+    |     password?token={kc_token}|                              |
+    |  --------------------------->|                              |
+    |                              |  6. Validate token:          |
+    |                              |     GET /realms/{realm}/     |
+    |                              |     login-actions/           |
+    |                              |     action-token?key={token} |
+    |                              |  --------------------------->|
+    |                              |  <-- token valid/invalid ----|
+    |                              |                              |
+    |  7a. Token valid:            |                              |
+    |  <--- render reset form -----|                              |
+    |                              |                              |
+    |  7b. Token invalid/expired:  |                              |
+    |  <--- render expired view ---|                              |
+    |                              |                              |
+    |  8. POST /api/auth/          |                              |
+    |     reset-password           |                              |
+    |     { token, newPassword }   |                              |
+    |  --------------------------->|                              |
+    |                              |  9. POST token endpoint      |
+    |                              |     with the action token    |
+    |                              |     to set new password      |
+    |                              |                              |
+    |                              |     PUT /admin/realms/       |
+    |                              |     {realm}/users/{id}/      |
+    |                              |     reset-password           |
+    |                              |     { \"type\":\"password\",     |
+    |                              |       \"value\":\"NewPass!\",    |
+    |                              |       \"temporary\":false }    |
+    |                              |  --------------------------->|
+    |                              |                              |
+    |                              |  10. Terminate all sessions: |
+    |                              |     DELETE /admin/realms/    |
+    |                              |     {realm}/users/{id}/      |
+    |                              |     sessions                 |
+    |                              |  --------------------------->|
+    |                              |                              |
+    |  11. 302 to /login +         |                              |
+    |      toast \"Password updated\"|                              |
+    |  <--- redirect --------------|                              |
+```
+
+**Exact Keycloak Endpoints:**
+
+| Step | Endpoint | Method | Purpose |
+|---|---|---|---|
+| 3 (lookup) | `/admin/realms/{realm}/users?email={email}&exact=true` | GET | Find user by email |
+| 3 (action) | `/admin/realms/{realm}/users/{id}/execute-actions-email?lifespan=900` | PUT | Trigger reset email |
+| 9 | `/admin/realms/{realm}/users/{id}/reset-password` | PUT | Set new password |
+| 10 | `/admin/realms/{realm}/users/{id}/sessions` | DELETE | Kill all sessions |
+
+---
+
+## 3. React Component API Specifications (SDK: `@healthgate/react`)
+
+### 3a. `<HealthGateLogin />`
+
+```typescript
+interface HealthGateLoginProps {
+  /**
+   * Application name displayed in \"Sign in to continue to {appName}\"
+   * @default \"your account\"
+   */
+  appName?: string;
+
+  /**
+   * Whether to show the SSO/SAML button
+   * @default true
+   */
+  showSSO?: boolean;
+
+  /**
+   * Whether to show the \"Sign up\" registration link
+   * @default true
+   */
+  showRegistration?: boolean;
+
+  /**
+   * Callback fired after successful authentication
+   * Receives the authenticated user object
+   */
+  onSuccess?: (user: HealthGateUser) => void;
+
+  /**
+   * Callback fired on authentication error
+   */
+  onError?: (error: HealthGateError) => void;
+
+  /**
+   * Override the post-login redirect URL
+   * @default window.location.origin + \"/dashboard\"
+   */
+  redirectUri?: string;
+
+  /**
+   * Custom CSS class applied to the outermost container
+   */
+  className?: string;
+
+  /**
+   * Override default brand logo
+   * Pass a React node (e.g., <img> or SVG component)
+   */
+  logo?: React.ReactNode;
+
+  /**
+   * Additional footer content (e.g., custom legal notices)
+   */
+  footerContent?: React.ReactNode;
+}
+
+// Usage:
+<HealthGateLogin
+  appName=\"Clinical Decision Support\"
+  showSSO={true}
+  onSuccess={(user) => router.push('/dashboard')}
+  onError={(err) => console.error(err)}
+/>
+```
+
+### 3b. `<HealthGateProvider />`
+
+```typescript
+interface HealthGateProviderProps {
+  /**
+   * Keycloak server URL (e.g., \"https://auth.googlehealth.com\")
+   */
+  keycloakUrl: string;
+
+  /**
+   * Keycloak realm name (e.g., \"healthgate-clinician\")
+   */
+  realm: string;
+
+  /**
+   * OIDC client ID registered in Keycloak
+   */
+  clientId: string;
+
+  /**
+   * Idle timeout in minutes before session warning
+   * @default 15
+   */
+  idleTimeoutMinutes?: number;
+
+  /**
+   * Minutes before idle timeout to show warning dialog
+   * @default 2
+   */
+  sessionWarningMinutes?: number;
+
+  /**
+   * Callback when session expires (idle or max lifetime)
+   */
+  onSessionExpired?: () => void;
+
+  /**
+   * Callback when an auth error occurs (token refresh failure, etc.)
+   */
+  onAuthError?: (error: HealthGateError) => void;
+
+  /**
+   * URL to redirect to when unauthenticated
+   * @default \"/login\"
+   */
+  loginUrl?: string;
+
+  /**
+   * React children
+   */
+  children: React.ReactNode;
+}
+
+// Context value shape (internal, not exported as a prop):
+interface HealthGateContextValue {
+  user: HealthGateUser | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  token: string | null;                   // access token (short-lived, for API calls)
+  login: (options?: LoginOptions) => void;
+  logout: () => Promise<void>;
+  refresh: () => Promise<void>;
+  roles: string[];
+  hasRole: (roleName: string) => boolean;
+  session: {
+    expiresAt: Date | null;
+    idleTimeRemaining: number;            // seconds
+    isSessionWarningVisible: boolean;
+    extendSession: () => Promise<void>;
+  };
+}
+
+// Usage:
+<HealthGateProvider
+  keycloakUrl=\"https://auth.googlehealth.com\"
+  realm=\"healthgate-clinician\"
+  clientId=\"clinical-decision-support\"
+  idleTimeoutMinutes={15}
+  sessionWarningMinutes={2}
+  onSessionExpired={() => router.push('/session-expired')}
+>
+  <App />
+</HealthGateProvider>
+```
+
+### 3c. `useAuth()` Hook
+
+```typescript
+interface UseAuthReturn {
+  /**
+   * The authenticated user, or null if not logged in
+   */
+  user: HealthGateUser | null;
+
+  /**
+   * Whether the user is authenticated (has valid tokens)
+   */
+  isAuthenticated: boolean;
+
+  /**
+   * Whether the auth state is being determined (initial load, token refresh)
+   */
+  isLoading: boolean;
+
+  /**
+   * The current access token for API calls.
+   * WARNING: This is the decrypted token for authorized API calls only.
+   * Never store this in localStorage or pass to untrusted code.
+   */
+  token: string | null;
+
+  /**
+   * Initiates the login flow. Redirects to HealthGate login page.
+   * @param options.redirectUri - Where to redirect after login
+   */
+  login: (options?: { redirectUri?: string }) => void;
+
+  /**
+   * Logs the user out. Clears all session state and redirects to login.
+   * Calls Keycloak end_session_endpoint for SSO logout propagation.
+   */
+  logout: () => Promise<void>;
+
+  /**
+   * Manually triggers a token refresh. Normally automatic.
+   * Throws HealthGateError if refresh fails after retries.
+   */
+  refresh: () => Promise<void>;
+}
+
+// Usage:
+function DashboardHeader() {
+  const { user, isAuthenticated, isLoading, logout } = useAuth();
+
+  if (isLoading) return <Skeleton className=\"h-8 w-32\" />;
+  if (!isAuthenticated) return null;
+
+  return (
+    <div>
+      Welcome, {user.name}
+      <Button variant=\"ghost\" onClick={logout}>Sign out</Button>
+    </div>
+  );
+}
+```
+
+### 3d. `useSession()` Hook
+
+```typescript
+interface UseSessionReturn {
+  /**
+   * Absolute expiration time of the current session
+   */
+  expiresAt: Date | null;
+
+  /**
+   * Seconds remaining before idle timeout triggers
+   * Updates every second when warning is visible
+   */
+  idleTimeRemaining: number;
+
+  /**
+   * Whether the session timeout warning dialog is currently visible
+   */
+  isSessionWarningVisible: boolean;
+
+  /**
+   * Extends the session by resetting the idle timer.
+   * Calls the server to refresh the session.
+   * Throws HealthGateError if the session has already expired server-side.
+   */
+  extendSession: () => Promise<void>;
+
+  /**
+   * The Keycloak session ID (for audit correlation)
+   */
+  sessionId: string | null;
+}
+
+// Usage:
+function SessionInfo() {
+  const { idleTimeRemaining, isSessionWarningVisible, extendSession } = useSession();
+
+  return (
+    <>
+      <p>Session active. Idle timeout in {idleTimeRemaining}s</p>
+      {isSessionWarningVisible && (
+        <Button onClick={extendSession}>Stay signed in</Button>
+      )}
+    </>
+  );
+}
+```
+
+### 3e. `withAuth()` HOC
+
+```typescript
+interface WithAuthOptions {
+  /**
+   * Required roles. User must have ALL specified roles.
+   * Uses realm roles by default.
+   */
+  requiredRoles?: string[];
+
+  /**
+   * URL to redirect to when not authenticated
+   * @default \"/login\"
+   */
+  loginUrl?: string;
+
+  /**
+   * URL to redirect to when authenticated but missing required roles
+   * @default renders a 403 \"no permission\" message
+   */
+  unauthorizedUrl?: string;
+
+  /**
+   * Component to render while auth state is loading
+   * @default full-page centered spinner
+   */
+  loadingComponent?: React.ComponentType;
+}
+
+/**
+ * Higher-order component that protects a page component.
+ * Redirects to login if unauthenticated.
+ * Shows 403 if authenticated but missing required roles.
+ */
+function withAuth<P extends object>(
+  Component: React.ComponentType<P & { user: HealthGateUser }>,
+  options?: WithAuthOptions
+): React.ComponentType<P>;
+
+// Usage:
+function AdminPage({ user }: { user: HealthGateUser }) {
+  return <div>Welcome admin {user.name}</div>;
+}
+
+export default withAuth(AdminPage, {
+  requiredRoles: ['healthgate-admin'],
+  unauthorizedUrl: '/unauthorized',
+});
+```
+
+### Shared TypeScript Interfaces
+
+```typescript
+interface HealthGateUser {
+  id: string;                             // Keycloak subject UUID
+  email: string;
+  name: string;
+  firstName: string;
+  lastName: string;
+  roles: string[];                        // all roles (realm + client, flattened)
+  realmRoles: string[];
+  clientRoles: Record<string, string[]>;  // { \"app-id\": [\"role1\", \"role2\"] }
+  mfaEnabled: boolean;
+  lastLogin: string;                      // ISO 8601
+  sessionId: string;
+}
+
+interface HealthGateError {
+  code: HealthGateErrorCode;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+type HealthGateErrorCode =
+  | 'INVALID_CREDENTIALS'
+  | 'ACCOUNT_LOCKED'
+  | 'MFA_REQUIRED'
+  | 'MFA_INVALID'
+  | 'SESSION_EXPIRED'
+  | 'TOKEN_REFRESH_FAILED'
+  | 'KEYCLOAK_UNREACHABLE'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'NETWORK_ERROR'
+  | 'UNKNOWN';
+
+interface HealthGateConfig {
+  keycloakUrl: string;
+  realm: string;
+  clientId: string;
+  idleTimeoutMinutes: number;
+  sessionWarningMinutes: number;
+  onSessionExpired?: () => void;
+  onAuthError?: (error: HealthGateError) => void;
+}
+
+interface LoginOptions {
+  redirectUri?: string;
+}
+```
+
+---
+
+## 4. Animation & Micro-interaction Specs
+
+All animations respect `prefers-reduced-motion: reduce` by conditionally disabling them. When reduced motion is preferred, all transitions are instant (0ms duration).
+
+### 4.1 Page Transitions (Login -> MFA -> Dashboard)
+
+**Approach:** No full-page animations between auth screens. Each screen loads as a fresh route via Next.js App Router. The transition is a standard browser navigation (no client-side route animation). Rationale: auth screens must work without JavaScript (NFR10), and client-side transitions add complexity without meaningful UX gain in a sequential auth flow.
+
+**However**, within each page, the card content fades in on mount:
+
+```css
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.auth-card-enter {
+  animation: fadeInUp 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-card-enter {
+    animation: none;
+    opacity: 1;
+  }
+}
+```
+
+### 4.2 Form Submission Loading States
+
+**Button Spinner:**
+
+```
+[Continue]  -->  [<spinner> Signing in...]  -->  [Continue]  (on error)
+                                               -->  [redirect] (on success)
+```
+
+- Spinner is `Loader2` from `lucide-react`, `h-4 w-4 animate-spin` (Tailwind's default spin: 1s linear infinite)
+- Transition to loading state is instant (no fade)
+- All form inputs are disabled via wrapping `<fieldset disabled>` -- this grays out the entire form consistently
+
+**Input Disable During Submit:**
+
+Inputs receive `opacity-50 cursor-not-allowed` via the fieldset's disabled state (handled natively by the browser).
+
+### 4.3 Error Appearance
+
+**Inline Errors (field-level):**
+
+- Appear instantly on blur validation or on submit
+- No animation (per UX spec section 2.6: \"Input state changes: instant\")
+- Red text (`text-destructive`), `text-xs`, positioned directly below the input via `FormMessage`
+
+**Banner Errors (form-level):**
+
+```css
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+    margin-top: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 100px;
+    margin-top: 1rem;
+  }
+}
+
+.form-banner-enter {
+  animation: slideDown 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  overflow: hidden;
+}
+```
+
+- Banner slides down from the top of the form content area
+- Background: `bg-destructive/10` (destructive color at 10% opacity), `border border-destructive/20`
+- Icon: `AlertCircle` in destructive color, left-aligned
+- Text: `text-sm text-destructive`
+
+**Toast Errors (system-level, Sonner):**
+
+- Sonner default animation: slides in from bottom-right
+- Auto-dismiss after 5 seconds for informational, 8 seconds for errors
+- Manual dismiss via close button
+- Sonner configuration:
+
+```typescript
+<Toaster
+  position=\"bottom-right\"
+  toastOptions={{
+    duration: 5000,
+    className: 'font-ui',
+    style: {
+      '--toast-bg': 'var(--card)',
+      '--toast-border': 'var(--border)',
+      '--toast-text': 'var(--foreground)',
+    },
+  }}
+/>
+```
+
+### 4.4 Session Timeout Countdown
+
+**Timer Display:**
+
+```
+<span className=\"font-semibold tabular-nums\">
+  {minutes}:{seconds.toString().padStart(2, '0')}
+</span>
+```
+
+- `tabular-nums` ensures digits don't cause layout shift as values change (monospaced numerals)
+- Updates every 1000ms via `setInterval`
+- No additional animation on the numbers themselves -- they simply change value
+
+**Dialog Entry Animation (AlertDialog from Radix):**
+
+- Overlay: fades in 150ms `ease-out` (Radix default)
+- Dialog: scales from 95% to 100% over 150ms `ease-out` (Radix default)
+- These match the UX spec's transition values (section 2.6: Transform 200ms)
+
+**When Timer Reaches 0:**
+
+- No special animation -- immediate redirect to `/session-expired`
+- The dialog closes as the page navigates away
+
+### 4.5 Password Strength / Policy Helper
+
+**PasswordPolicyHelper Animation:**
+
+Each requirement line has a checkmark icon and text. When a requirement transitions from unmet to met:
+
+```css
+.policy-check-met {
+  color: var(--green-600);
+  transition: color 150ms ease-out;
+}
+
+.policy-check-icon {
+  transition: transform 150ms ease-out, opacity 150ms ease-out;
+}
+
+.policy-check-icon-active {
+  transform: scale(1);
+  opacity: 1;
+}
+
+.policy-check-icon-inactive {
+  transform: scale(0.8);
+  opacity: 0.3;
+}
+```
+
+Subtle: the checkmark icon scales from 0.8 to 1.0 and opacity from 0.3 to 1.0 over 150ms when the criterion is met. The color transitions from `text-muted-foreground` to `text-green-600`.
+
+### 4.6 OTP Auto-Advance
+
+When the user types a digit in an OTP slot:
+- The digit appears instantly in the current slot
+- Focus advances to the next slot with no delay (handled natively by `input-otp`)
+- On the 6th digit entry: all slots briefly flash with a subtle border color change (`border-primary` for 200ms) before the auto-submit spinner appears. This gives a visual \"confirmation\" that all digits are entered.
+
+```css
+.otp-complete-flash .otp-slot {
+  border-color: var(--primary);
+  transition: border-color 200ms ease-out;
+}
+```
+
+### 4.7 Password Visibility Toggle
+
+When the eye icon is clicked:
+- Icon changes instantly between `Eye` and `EyeOff` (lucide-react icons)
+- No animation on icon swap
+- Input `type` toggles between `password` and `text`
+- 10-second auto-hide timer starts; when it fires, input reverts to `type=\"password\"` with no animation
+
+---
+
+## 5. Responsive Breakpoint Details
+
+All screens use the **single centered column** layout (per UX spec section 7). There is no layout split at any breakpoint.
+
+### Global Layout Rules
+
+| Breakpoint | Container | Card Padding | Body Font Size |
+|---|---|---|---|
+| `<640px` (mobile) | `w-full px-4` (no max-width constraint) | `p-6` (24px) | `text-sm` (14px) |
+| `640-1024px` (tablet) | `max-w-sm` (384px), centered | `p-8` (32px) | `text-sm` (14px) |
+| `>1024px` (desktop) | `max-w-sm` (384px), centered | `p-8` (32px) | `text-sm` (14px) |
+
+### Per-Screen Breakpoint Specifics
+
+**S1 Login / S2 Register / S5 Forgot Password / S6 Reset Password / S10 Account Locked:**
+
+| Element | `<640px` | `640-1024px` | `>1024px` |
+|---|---|---|---|
+| Card width | `w-full` (full viewport minus `px-4`) | `max-w-sm` (384px) | `max-w-sm` (384px) |
+| Card padding | `p-6` | `p-8` | `p-8` |
+| Page title | `text-2xl` (24px) | `text-3xl` (30px) | `text-3xl` (30px) |
+| Input height | `h-11` (44px, touch target) | `h-10` (40px) | `h-10` (40px) |
+| Button height | `h-11` (44px, touch target) | `h-10` (40px) | `h-10` (40px) |
+| Logo size | 32px | 40px | 40px |
+| Footer text | `text-[11px]` | `text-xs` (12px) | `text-xs` (12px) |
+
+**S3 MFA Challenge / S4 MFA Setup:**
+
+| Element | `<640px` | `640-1024px` | `>1024px` |
+|---|---|---|---|
+| OTP slot size | `h-12 w-12` (48px, touch) | `h-12 w-12` (48px) | `h-12 w-12` (48px) |
+| OTP slot gap | `gap-2` (8px) | `gap-3` (12px) | `gap-3` (12px) |
+| QR code size | 180x180px | 200x200px | 200x200px |
+| Manual key text | `text-xs` | `text-sm` | `text-sm` |
+| Card width | `w-full` | `max-w-[28rem]` (448px) | `max-w-[28rem]` (448px) |
+
+**S7 Session Timeout Warning (AlertDialog):**
+
+| Element | `<640px` | `640-1024px` | `>1024px` |
+|---|---|---|---|
+| Dialog width | `w-[calc(100%-2rem)]` | `max-w-sm` (384px) | `max-w-sm` (384px) |
+| Button layout | Stacked vertically (`flex-col`) | Side by side (`flex-row`) | Side by side (`flex-row`) |
+| Button height | `h-11` (44px touch target) | `h-10` | `h-10` |
+
+**S9 Dashboard:**
+
+| Element | `<640px` | `640-1024px` | `>1024px` |
+|---|---|---|---|
+| Main content padding | `p-4` | `p-6` | `p-8` |
+| Header height | `h-14` (56px) | `h-16` (64px) | `h-16` (64px) |
+| User menu | Icon only (avatar) | Avatar + name | Avatar + name |
+
+### Touch Target Compliance
+
+Per WCAG 2.1 AAA (adopted as AA floor per UX spec and NFR3):
+
+- All interactive elements at `<640px` are minimum `44x44px`
+- Password eye toggle: `p-2` padding around icon (total tap area 44px)
+- Checkbox tap area: label click also toggles (via `htmlFor` association)
+- Links: `py-2` on mobile for sufficient tap height
+- OTP slots: `h-12 w-12` (48px) at all breakpoints
+
+---
+
+## 6. Accessibility Implementation Details
+
+### S1: Login Page
+
+**Tab Order (numbered):**
+
+1. Skip to content link (hidden until focused): `<a href=\"#login-form\" className=\"sr-only focus:not-sr-only\">`
+2. Email input (`autoFocus`)
+3. Password input
+4. Password visibility toggle (`<button aria-label=\"Show password\">`)
+5. \"Forgot password?\" link
+6. \"Continue\" submit button
+7. \"SSO / SAML\" button
+8. \"Sign up\" link
+9. HIPAA Notice footer link
+10. Privacy footer link
+11. Terms footer link
+
+**ARIA Attributes:**
+
+```html
+<form aria-label=\"Sign in\" noValidate>
+  <div role=\"alert\" aria-live=\"assertive\">
+    <!-- Form-level error banner renders here when present -->
+  </div>
+
+  <label htmlFor=\"login-email\">Email address</label>
+  <input
+    id=\"login-email\"
+    type=\"email\"
+    autoComplete=\"email\"
+    aria-required=\"true\"
+    aria-invalid={!!errors.email}
+    aria-describedby={errors.email ? \"login-email-error\" : undefined}
+  />
+  <p id=\"login-email-error\" role=\"alert\">{errors.email?.message}</p>
+
+  <label htmlFor=\"login-password\">Password</label>
+  <div className=\"relative\">
+    <input
+      id=\"login-password\"
+      type={showPassword ? \"text\" : \"password\"}
+      autoComplete=\"current-password\"
+      aria-required=\"true\"
+      aria-invalid={!!errors.password}
+      aria-describedby={errors.password ? \"login-password-error\" : undefined}
+    />
+    <button
+      type=\"button\"
+      aria-label={showPassword ? \"Hide password\" : \"Show password\"}
+      aria-pressed={showPassword}
+      tabIndex={0}
+    >
+      {showPassword ? <EyeOff /> : <Eye />}
+    </button>
+  </div>
+  <p id=\"login-password-error\" role=\"alert\">{errors.password?.message}</p>
+
+  <button type=\"submit\" aria-busy={isSubmitting}>
+    {isSubmitting ? \"Signing in...\" : \"Continue\"}
+  </button>
+</form>
+```
+
+**Screen Reader Announcements:**
+
+| Event | Method | Announcement |
+|---|---|---|
+| Error banner appears | `role=\"alert\"` + `aria-live=\"assertive\"` on banner container | \"Invalid email or password. Please try again.\" |
+| Field error on blur | `role=\"alert\"` on `FormMessage` | \"Enter a valid email address\" |
+| Loading state | `aria-busy=\"true\"` on submit button | Button text \"Signing in...\" is read |
+| Successful redirect | N/A (page navigation) | New page title announced |
+
+**Focus Management:**
+
+- On page load: email input receives focus (`autoFocus`)
+- On server error: focus moves to the error banner container
+- On field error after submit: focus moves to the first invalid field
+
+### S3: MFA Challenge
+
+**Tab Order:**
+
+1. OTP input (treated as single composite widget; internal navigation via arrow keys)
+2. \"Verify\" button
+3. \"Use a recovery code\" link
+4. \"Back to sign in\" link
+
+**ARIA Attributes:**
+
+```html
+<div role=\"group\" aria-label=\"6-digit verification code\">
+  <input
+    aria-label=\"Digit 1 of 6\"
+    inputMode=\"numeric\"
+    pattern=\"[0-9]\"
+    maxLength={1}
+  />
+  <!-- ... slots 2-6 with corresponding aria-label -->
+</div>
+```
+
+Note: shadcn's `InputOTP` component (built on `input-otp` library) handles these ARIA attributes internally. The library uses a single hidden input with a visual overlay, which provides correct screen reader behavior out of the box.
+
+**Screen Reader Announcements:**
+
+| Event | Method | Announcement |
+|---|---|---|
+| Code entered (auto-submit) | `aria-live=\"polite\"` on status region | \"Verifying code...\" |
+| Verification failed | `role=\"alert\"` on error banner | \"Unable to verify. Please try again.\" |
+| OTP cleared after error | Focus returned to first slot | Screen reader announces first slot label |
+
+### S7: Session Timeout Warning
+
+**ARIA Attributes:**
+
+```html
+<div
+  role=\"alertdialog\"
+  aria-modal=\"true\"
+  aria-label=\"Session expiring\"
+  aria-describedby=\"session-timeout-desc\"
+>
+  <h2 id=\"session-timeout-title\">Session expiring</h2>
+  <p id=\"session-timeout-desc\">
+    You'll be automatically signed out in
+    <span role=\"timer\" aria-live=\"assertive\" aria-atomic=\"true\">
+      {formatTime(secondsRemaining)}
+    </span>
+    due to inactivity.
+  </p>
+  <button autoFocus>Stay in</button>
+  <button>Sign out</button>
+</div>
+```
+
+**Critical:** The countdown uses `role=\"timer\"` with `aria-live=\"assertive\"`. However, announcing every second is excessive for screen readers. Implementation should throttle announcements:
+
+- Announce immediately when dialog opens
+- Announce at 1:00 remaining
+- Announce at 0:30 remaining
+- Announce at 0:10 remaining
+- Announce at 0:00 (session expired)
+
+This is achieved by updating the `aria-live` region content only at those thresholds, while visually updating the timer every second.
+
+**Focus Management:**
+
+- When dialog opens: \"Stay in\" button receives focus (`autoFocus`)
+- Focus is trapped within the dialog (Radix AlertDialog handles this natively)
+- When dialog closes (via \"Stay in\"): focus returns to the element that was focused before the dialog opened
+
+### All Screens: Skip Link
+
+Every auth page includes a skip link as the first focusable element:
+
+```html
+<a
+  href=\"#main-content\"
+  className=\"sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md\"
+>
+  Skip to main content
+</a>
+```
+
+The target `#main-content` is placed on the card's content area (the form itself).
+
+---
+
+## 7. Dark Mode Token Mapping
+
+The design system uses CSS custom properties that are swapped when the `.dark` class is applied to the `<html>` element. Below is the exact visual mapping per element category.
+
+### Login Page Background
+
+| Token | Light Mode | Dark Mode |
+|---|---|---|
+| `--background` | `oklch(0.978 0.008 85)` / `#faf9f5` (warm off-white) | `oklch(0.125 0.006 60)` / `#1f1e1d` (warm dark) |
+
+### Card / Form Area
+
+| Token | Light Mode | Dark Mode |
+|---|---|---|
+| `--card` | `oklch(0.978 0.008 85)` / `#faf9f5` (same as background; card floats via shadow) | `oklch(0.165 0.008 60)` / `#2a2928` (slightly lighter than background; elevated) |
+| `--card-foreground` | `oklch(0.110 0.006 60)` / `#141413` | `oklch(0.978 0.008 85)` / `#faf9f5` |
+| Card shadow | `0 2px 8px rgba(20,20,19,0.08)` | `0 2px 8px rgba(0,0,0,0.3)` (stronger shadow for contrast on dark bg) |
+
+### Input Fields
+
+| Property | Light Mode | Dark Mode |
+|---|---|---|
+| Border (`--input`) | `oklch(0.905 0.018 80)` / `#e8e6dc` (warm gray) | `oklch(1 0 0 / 15%)` / white at 15% opacity |
+| Background | `transparent` (inherits card) | `transparent` (inherits card) |
+| Text (`--foreground`) | `#141413` | `#faf9f5` |
+| Placeholder (`--muted-foreground`) | `#b0aea5` | `#b0aea5` (maintained in dark) |
+| Focus ring (`--ring`) | `oklch(0.700 0.140 45)` / `#d97757` | `oklch(0.700 0.140 45)` / `#d97757` (terracotta maintained) |
+| Error border (`--destructive`) | `#e5484d` | `#e5484d` (maintained) |
+
+### Buttons
+
+**Primary (Terracotta CTA):**
+
+| Property | Light Mode | Dark Mode |
+|---|---|---|
+| Background (`--primary`) | `#d97757` | `#d97757` (maintained) |
+| Text (`--primary-foreground`) | `#faf9f5` | `#faf9f5` (maintained) |
+| Hover | `#c15f3c` (darker terracotta) | `#c15f3c` (same) |
+| Shadow | `0 1px 2px rgba(20,20,19,0.06)` | `0 1px 2px rgba(0,0,0,0.2)` |
+
+**Secondary / Outline (SSO Button):**
+
+| Property | Light Mode | Dark Mode |
+|---|---|---|
+| Background | `transparent` | `transparent` |
+| Border | `--border` / `#e8e6dc` | `--border` / white at 12% |
+| Text | `--foreground` / `#141413` | `--foreground` / `#faf9f5` |
+| Hover background | `--accent` / `#f4f3ee` | `--accent` / `oklch(0.220 0.010 60)` / `#363534` |
+
+**Ghost (User Menu, Password Toggle):**
+
+| Property | Light Mode | Dark Mode |
+|---|---|---|
+| Background | `transparent` | `transparent` |
+| Text | `--foreground` | `--foreground` |
+| Hover background | `--accent` / `#f4f3ee` | `--accent` / `#363534` |
+
+### Error Text
+
+| Property | Light Mode | Dark Mode |
+|---|---|---|
+| Color (`--destructive`) | `oklch(0.577 0.245 27.325)` / `#e5484d` | `oklch(0.577 0.245 27.325)` / `#e5484d` (maintained -- red reads well on dark) |
+
+### Links
+
+| Property | Light Mode | Dark Mode |
+|---|---|---|
+| Default color (`--primary`) | `#d97757` | `#d97757` (maintained) |
+| Hover color | `#c15f3c` | `#c15f3c` |
+| Visited color | `#d97757` (no change -- security UX, don't reveal visited state) | `#d97757` |
+
+### Implementation Notes
+
+Dark mode toggle is controlled by:
+1. User's system preference (`prefers-color-scheme: dark`) as default
+2. Optional explicit toggle (not in V1 auth screens -- inherits from consumer app or system)
+
+```css
+:root {
+  --background: oklch(0.978 0.008 85);
+  --foreground: oklch(0.110 0.006 60);
+  --card: oklch(0.978 0.008 85);
+  --primary: oklch(0.700 0.140 45);
+  /* ... all light tokens ... */
+}
+
+.dark {
+  --background: oklch(0.125 0.006 60);
+  --foreground: oklch(0.978 0.008 85);
+  --card: oklch(0.165 0.008 60);
+  --primary: oklch(0.700 0.140 45);  /* unchanged */
+  /* ... all dark tokens ... */
+}
+```
+
+---
+
+## 8. Edge Case UX
+
+### 8.1 What Happens if JavaScript is Disabled?
+
+Per NFR10: \"All authentication flows must function without JavaScript disabled, via server-side rendered fallback forms (progressive enhancement).\"
+
+**Implementation:**
+
+- Auth pages use Next.js App Router Server Components by default. The HTML form is fully rendered server-side.
+- The `<form>` element has a native `action` attribute pointing to the Next.js API route: `action=\"/api/auth/login\" method=\"POST\"`.
+- Without JavaScript: form submits as a standard HTML form POST. The server processes it and returns a redirect (302) or re-renders the page with error messages embedded in the HTML.
+- The OTP auto-submit does NOT work without JS. The \"Verify\" button serves as the fallback (which is why it exists despite auto-submit).
+- The session timeout warning does NOT appear without JS. The session expires server-side after 15 minutes regardless. The next request returns 401 and redirects to `/session-expired`.
+- Password visibility toggle does not work without JS. The password field remains `type=\"password\"`.
+- `PasswordPolicyHelper` (real-time validation) does not work without JS. Server-side validation catches all errors and re-renders the form with error messages.
+- `<noscript>` tag included on auth pages: `<noscript><p class=\"text-sm text-muted-foreground text-center mt-4\">For the best experience, please enable JavaScript in your browser.</p></noscript>`
+
+### 8.2 What Happens on Very Slow Connections (>3s response)?
+
+**Login Form Submit (>3s):**
+
+- The \"Signing in...\" spinner continues indefinitely (no client-side timeout).
+- If the request takes >10 seconds, the client side shows a subtle secondary message below the spinner: \"This is taking longer than usual...\" (via a `setTimeout` that sets additional state).
+- If the request fails due to network timeout (browser-defined, typically 30-60s), the catch handler shows a toast: \"Unable to connect. Check your internet connection and try again.\"
+- The button returns to its default \"Continue\" state.
+
+**MFA Auto-Submit (>3s):**
+
+- OTP slots remain locked with the entered digits visible.
+- Spinner continues on the \"Verify\" button.
+- Same timeout messaging as above.
+
+**Page Load (>3s on 3G):**
+
+- Next.js streaming SSR begins sending HTML immediately. The shell (background color, layout) renders before JavaScript hydrates.
+- `loading.tsx` files in the App Router show a centered skeleton card with pulsing placeholder lines.
+- Critical CSS is inlined. Fonts load asynchronously with `font-display: swap` to prevent invisible text.
+
+### 8.3 What Happens with Browser Autofill Conflicts?
+
+**Known Autofill Issues and Mitigations:**
+
+| Issue | Mitigation |
+|---|---|
+| Chrome fills email+password but visually the labels overlap the filled values | Use floating labels that always stay above the input (shadcn/ui default), OR use placeholder text (our approach) that disappears when autofilled. The `Label` is positioned above the `Input`, not as a floating label, so this is a non-issue. |
+| Password managers fill the wrong field (e.g., filling \"Confirm password\" with saved password) | `autoComplete=\"new-password\"` on register form forces password managers to generate/not-autofill. `autoComplete=\"current-password\"` on login form signals correct behavior. |
+| Autofill changes input value but React state is stale (the `onChange` event doesn't fire for autofill) | Use the `input` event (native) or listen for `animationstart` on the `-webkit-autofill` pseudo-class to detect autofill and sync React state. shadcn/ui Input uses `onChange` which is triggered by modern browsers on autofill. As a safety net: form validation runs on submit (not just on change), catching any desync. |
+| Chrome's yellow autofill background clashes with our warm off-white theme | Override via CSS: `input:-webkit-autofill { -webkit-box-shadow: 0 0 0 1000px var(--card) inset; -webkit-text-fill-color: var(--foreground); }` |
+
+### 8.4 What Happens When User Navigates Back After Login?
+
+**Scenario:** User logs in successfully, reaches `/dashboard`, then presses the browser Back button.
+
+**Behavior:**
+
+- The `/login` page is re-rendered.
+- The `LoginPage` component checks auth state on mount via `useAuth()`.
+- If the user is already authenticated (valid tokens in cookies), the page immediately redirects to `/dashboard` (or the configured redirect).
+- The user never sees the login form in an authenticated state.
+- Response header on login page: `Cache-Control: no-store, no-cache, must-revalidate` prevents the browser from showing a cached version of the login form with previously-entered credentials.
+
+**Implementation (middleware):**
+
+```typescript
+// middleware.ts
+if (isAuthPage(pathname) && hasValidSession(request)) {
+  return NextResponse.redirect(new URL('/dashboard', request.url));
+}
+```
+
+### 8.5 What Happens on Page Refresh During MFA Flow?
+
+**Scenario:** User has entered credentials (step 1 of auth), is on `/login/mfa`, and refreshes the page.
+
+**Behavior:**
+
+- The partial authentication state is stored in an HttpOnly cookie (`hg-mfa-session`) set during the initial credential verification. This cookie contains an encrypted reference to the Keycloak authentication session (not the full credentials).
+- On refresh, the MFA page checks for this cookie.
+- If the cookie is present and the Keycloak auth session is still valid (has not expired -- Keycloak auth session timeout is 5 minutes): the MFA page renders normally.
+- If the cookie is missing or the Keycloak auth session has expired: the user is redirected back to `/login` with no error message. They must re-enter credentials.
+- The MFA session cookie has `Max-Age=300` (5 minutes), matching Keycloak's action token timeout.
+
+### 8.6 What Happens with Multiple Tabs Open?
+
+**Scenario 1: User is logged in with multiple tabs open. Session timeout warning appears.**
+
+- Session idle tracking uses `BroadcastChannel` API (with `localStorage` event fallback for Safari < 15.4).
+- When one tab detects the idle threshold and shows the warning, it broadcasts `{ type: 'SESSION_WARNING', secondsRemaining: 120 }`.
+- All other tabs receive this message and show the warning dialog simultaneously.
+- When the user clicks \"Stay in\" on any tab, that tab broadcasts `{ type: 'SESSION_EXTENDED' }`.
+- All tabs dismiss their warning dialogs and reset their idle timers.
+- If the user clicks \"Sign out\" on any tab, it broadcasts `{ type: 'SESSION_EXPIRED' }`.
+- All tabs redirect to `/session-expired`.
+
+**Scenario 2: User logs out in one tab.**
+
+- Logout broadcasts `{ type: 'SESSION_EXPIRED' }` via BroadcastChannel.
+- All other tabs receive the message, clear local state, and redirect to `/login`.
+- Additionally, Keycloak's back-channel logout notifies the BFF endpoint, which invalidates the session cookie server-side.
+
+**Scenario 3: User is on `/login` in two tabs and logs in from one.**
+
+- After successful login in tab A, the session cookies are set.
+- Tab B still shows the login form.
+- When the user interacts with tab B (e.g., tries to submit), the middleware detects the valid session and redirects to `/dashboard`.
+- Alternatively, if tab B is left idle, it remains on the login page (harmless).
+
+**Scenario 4: User starts MFA in one tab and switches to another.**
+
+- The MFA session is tied to a single authentication flow in Keycloak (identified by the `hg-mfa-session` cookie).
+- Both tabs share the same cookie, so completing MFA in either tab completes the flow.
+- If MFA is completed in tab A, tab B's MFA form will fail on submit (the auth session is consumed). The BFF detects this and redirects tab B to `/dashboard` (since the user is now fully authenticated).
+
+---
+
+### Critical Files for Implementation
+
+- `/Users/avn/Desktop/prodACA/docs/phase0-discovery/05-ux-ui-design-spec.md` - Contains all 10 screen wireframes, design tokens (OKLCH color system, typography scale, spacing grid, shadows, transitions), component inventory, interaction states, error message patterns, responsive breakpoints, and accessibility requirements. This is the primary design source that every component tree in this document maps back to.
+
+- `/Users/avn/Desktop/prodACA/docs/phase1-prd/06-prd.md` - Contains FR1-FR25 with detailed acceptance criteria that define exact behavior for every screen (login credentials handling, MFA auto-submit, session timeout thresholds, password policy rules, error message wording, token lifetimes, SDK interface contracts). Every form schema, error state, and Keycloak endpoint mapping in this document traces directly to PRD acceptance criteria.
+
+- `/Users/avn/Desktop/prodACA/docs/phase0-discovery/02-user-personas.md` - Contains the 5 user personas (Dr. Sarah Chen, Maria Rodriguez, James Park, Priya Patel, Dr. Robert Kim) whose specific needs drive UX decisions throughout this document: session warning timing for clinicians, MFA simplicity for patients, SDK API surface for developers, and audit-trail requirements for the CISO.
+
+- `/Users/avn/Desktop/prodACA/docs/phase0-discovery/01-product-brief.md` - Contains the 3-Zone architecture model, KR targets (p95 < 200ms login, 99.95% uptime, < 8 hour integration time), and the tech stack constraints (Keycloak 24+, Next.js 14 App Router, PostgreSQL 16) that bound all implementation decisions in this finalization.
+
+- `/Users/avn/Desktop/prodACA/docs/phase0-discovery/03-competitive-analysis.md` - Contains the Keycloak selection rationale and competitive feature matrix that justify protocol choices (SAML 2.0 as a hard requirement, OIDC Authorization Code + PKCE), MFA method selection (TOTP primary, WebAuthn P2), and the SDK-first developer experience approach that differentiates HealthGate from Epic/Cerner/athena integration patterns."}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"cache_creation_input_tokens":6697,"cache_read_input_tokens":58802,"output_tokens":26561,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":6697,"ephemeral_5m_input_tokens":0},"inference_geo":"","iterations":[],"speed":"standard"}},"requestId":"req_011CYciyQNyNDKepBQRSo2Xr","type":"assistant","uuid":"1dcee202-bdb4-46e3-a857-14d8b6de1d4b","timestamp":"2026-03-01T17:12:21.811Z"}
