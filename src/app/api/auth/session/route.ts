@@ -66,10 +66,10 @@ export async function GET(request: NextRequest) {
     const response: SessionStatusResponse = {
       authenticated: true,
       user,
-      expiresAt: new Date(payload.exp * 1000).toISOString(),
+      expiresAt: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
       idleTimeoutMs: 900 * 1000,
       maxLifetimeMs: 43200 * 1000,
-      sessionStartedAt: new Date(payload.auth_time * 1000).toISOString(),
+      sessionStartedAt: payload.auth_time ? new Date(payload.auth_time * 1000).toISOString() : null,
     };
 
     return NextResponse.json(response);

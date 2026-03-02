@@ -186,7 +186,7 @@ export async function POST(request: NextRequest) {
         metadata: { email: parsed.data.email },
       });
 
-      return NextResponse.json({ redirectTo: "/" });
+      return NextResponse.json({ redirectTo: "/dashboard" });
     } catch (error) {
       console.error("[auth/login] Error:", error);
       auditLogFromRequest(request, {

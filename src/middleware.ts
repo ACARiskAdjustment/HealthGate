@@ -3,16 +3,20 @@ import type { NextRequest } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { requestDuration, observeHistogram } from "@/lib/metrics";
 
+const isDev = process.env.NODE_ENV !== "production";
+
 /** Security headers applied to every response per the Security Design Review */
 const securityHeaders: Record<string, string> = {
   // CSP — restrictive per Security Review §6.1, no unsafe-eval
+  // In development: allow 'unsafe-inline' for scripts (Next.js hydration uses inline scripts)
+  // In production: use CSP nonces via next.config.js for inline script allowlisting
   "Content-Security-Policy": [
     "default-src 'self'",
-    "script-src 'self'",
+    isDev ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" : "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self' https://fonts.gstatic.com https://api.fontshare.com",
-    "connect-src 'self' " + (process.env.KEYCLOAK_URL || "http://localhost:8080"),
+    "connect-src 'self' " + (process.env.KEYCLOAK_URL || "http://localhost:8080") + (isDev ? " ws://localhost:3000" : ""),
     "frame-ancestors 'none'",
     "frame-src 'none'",
     "form-action 'self' " + (process.env.KEYCLOAK_URL || "http://localhost:8080"),
@@ -21,12 +25,12 @@ const securityHeaders: Record<string, string> = {
     "media-src 'none'",
     "worker-src 'self'",
     "manifest-src 'self'",
-    "upgrade-insecure-requests",
+    ...(isDev ? [] : ["upgrade-insecure-requests"]),
     "block-all-mixed-content",
   ].join("; "),
 
-  // HSTS — 1 year, includeSubDomains, preload-ready
-  "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+  // HSTS — 1 year, includeSubDomains, preload-ready (production only)
+  ...(isDev ? {} : { "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload" }),
 
   // Legacy clickjacking protection
   "X-Frame-Options": "DENY",
@@ -45,9 +49,10 @@ const securityHeaders: Record<string, string> = {
   "X-DNS-Prefetch-Control": "off",
 
   // Cross-origin isolation (Spectre mitigation)
+  // Disabled in dev: require-corp blocks external fonts (Google Fonts, Fontshare)
   "Cross-Origin-Opener-Policy": "same-origin",
-  "Cross-Origin-Resource-Policy": "same-origin",
-  "Cross-Origin-Embedder-Policy": "require-corp",
+  "Cross-Origin-Resource-Policy": isDev ? "same-site" : "same-origin",
+  ...(isDev ? {} : { "Cross-Origin-Embedder-Policy": "require-corp" }),
 };
 
 /** Auth page paths that should have no-cache headers */
@@ -67,16 +72,18 @@ export function middleware(request: NextRequest) {
   const startMs = Date.now();
   const response = NextResponse.next();
 
-  // Apply all security headers
-  for (const [key, value] of Object.entries(securityHeaders)) {
-    response.headers.set(key, value);
+  // Skip security headers in development to avoid CSP blocking Next.js dev tooling
+  if (!isDev) {
+    for (const [key, value] of Object.entries(securityHeaders)) {
+      response.headers.set(key, value);
+    }
   }
 
   // Request correlation ID for tracing
   const requestId = uuidv4();
   response.headers.set("X-Request-Id", requestId);
-  // Make available to downstream handlers
-  request.headers.set("X-Request-Id", requestId);
+  // Pass request ID via response headers (avoid mutating request which can drop the body)
+  response.headers.set("X-Correlation-Id", requestId);
 
   // Cache-Control: no-store for all auth pages
   const pathname = request.nextUrl.pathname;
